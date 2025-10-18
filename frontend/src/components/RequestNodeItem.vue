@@ -1,10 +1,20 @@
-<!-- RequestNodeItem.vue -->
 <script setup lang="ts">
 import { ref } from 'vue'
 import { main } from '@/lib/wailsjs/go/models'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Button } from '@/components/ui/button'
 import { ChevronRight, Folder } from 'lucide-vue-next'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 
 defineProps<{
   node: main.RequestNode
@@ -30,15 +40,34 @@ function getMethodColor(method: string) {
 
 <template>
   <Collapsible v-if="node.children && node.children.length > 0" v-model:open="isOpen">
-    <CollapsibleTrigger as-child>
-      <Button variant="ghost" class="w-full justify-start gap-2 !px-2">
-        <Folder class="size-4" />
-        <span class="font-normal">{{ node.name }}</span>
-        <ChevronRight
-          :class="`ml-auto transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`"
-        />
-      </Button>
-    </CollapsibleTrigger>
+    <ContextMenu>
+      <ContextMenuTrigger as-child>
+        <CollapsibleTrigger as-child>
+          <Button variant="ghost" class="w-full justify-start gap-2 !px-2">
+            <Folder class="size-4" />
+            <span class="font-normal">{{ node.name }}</span>
+            <ChevronRight
+              :class="`ml-auto transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`"
+            />
+          </Button>
+        </CollapsibleTrigger>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>Add</ContextMenuSubTrigger>
+          <ContextMenuSubContent class="w-48">
+            <ContextMenuItem>Request</ContextMenuItem>
+            <ContextMenuItem>Folder</ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+        <ContextMenuItem>
+          <span>Rename</span>
+        </ContextMenuItem>
+        <ContextMenuItem>
+          <span class="text-destructive">Delete</span>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
     <CollapsibleContent>
       <div :class="`ml-${(level || 1) * 6}`">
         <RequestNodeItem
@@ -51,48 +80,25 @@ function getMethodColor(method: string) {
     </CollapsibleContent>
   </Collapsible>
 
-  <Button v-else class="w-full justify-start !px-2" variant="ghost">
-    <span :class="`text-xs font-semibold ${getMethodColor(node.method)}`">{{ node.method }}</span>
-    <span class="font-normal">{{ node.name }}</span>
-  </Button>
-  <!-- <div class="space-y-2">
-    <h2 class="px-2 text-xs font-medium text-muted-foreground">Requests</h2>
-    <div class="space-y-1">
-      <Collapsible
-        v-for="item in items"
-        :key="item.title"
-        as-child
-        :default-open="item.isActive"
-        class="group/collapsible"
-      >
-        <div>
-          <CollapsibleTrigger as-child>
-            <Button variant="ghost" class="w-full justify-start gap-2 !px-2">
-              <component :is="Folder" class="size-4" />
-              <span class="font-normal">{{ item.title }}</span>
-              <ChevronRight
-                class="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
-              />
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div class="ml-6 space-y-1">
-              <Button
-                v-for="subItem in item.items"
-                :key="subItem.title"
-                variant="ghost"
-                size="sm"
-                class="w-full justify-start"
-                as-child
-              >
-                <a :href="subItem.url">
-                  <span class="font-normal">{{ subItem.title }}</span>
-                </a>
-              </Button>
-            </div>
-          </CollapsibleContent>
-        </div>
-      </Collapsible>
-    </div>
-  </div> -->
+  <ContextMenu v-else>
+    <ContextMenuTrigger as-child>
+      <Button class="w-full justify-start !px-2" variant="ghost">
+        <span :class="`text-xs font-semibold ${getMethodColor(node.method)}`">{{
+          node.method
+        }}</span>
+        <span class="font-normal">{{ node.name }}</span>
+      </Button>
+    </ContextMenuTrigger>
+    <ContextMenuContent>
+      <ContextMenuItem>
+        <span>Save</span>
+      </ContextMenuItem>
+      <ContextMenuItem>
+        <span>Rename</span>
+      </ContextMenuItem>
+      <ContextMenuItem>
+        <span class="text-destructive">Delete</span>
+      </ContextMenuItem>
+    </ContextMenuContent>
+  </ContextMenu>
 </template>
