@@ -10,7 +10,7 @@ import (
 	"github.com/adrg/xdg"
 )
 
-var appDataDir = path.Join(xdg.DataHome, "rivulus")
+var appDataDir = path.Join(xdg.DataHome, "paperbox")
 var configFile = path.Join(appDataDir, "config.json")
 
 type Request struct {
