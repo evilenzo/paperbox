@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { main } from '@/lib/wailsjs/go/models'
+import { requests } from '@/lib/wailsjs/go/models'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Button } from '@/components/ui/button'
 import { ChevronRight, Folder } from 'lucide-vue-next'
@@ -15,9 +15,9 @@ import {
 } from '@/components/ui/context-menu'
 
 const props = defineProps<{
-  item: main.Item
+  item: requests.Item
   itemId: string
-  itemsMap: Record<string, main.Item>
+  itemsMap: Record<string, requests.Item>
   level?: number
 }>()
 
@@ -38,7 +38,7 @@ function getMethodColor(method?: string) {
   return methodColors[method.toUpperCase()] ?? 'text-muted-foreground'
 }
 
-const childItems = computed((): Array<{ id: string; item: main.Item }> => {
+const childItems = computed((): Array<{ id: string; item: requests.Item }> => {
   if (props.item.type !== 'folder' || !props.item.children) return []
   // children is array of UUID strings (after Wails regenerates, this will be string[])
   const childrenIds = Array.isArray(props.item.children)
@@ -49,8 +49,8 @@ const childItems = computed((): Array<{ id: string; item: main.Item }> => {
     .filter(
       (entry: {
         id: string
-        item: main.Item | undefined
-      }): entry is { id: string; item: main.Item } => entry.item !== undefined,
+        item: requests.Item | undefined
+      }): entry is { id: string; item: requests.Item } => entry.item !== undefined,
     )
 })
 </script>

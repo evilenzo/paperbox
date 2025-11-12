@@ -3,11 +3,11 @@ import type { LucideIcon } from 'lucide-vue-next'
 import { onMounted, ref, computed } from 'vue'
 import RequestNodeItem from '@/components/RequestNodeItem.vue'
 
-import { main } from '@/lib/wailsjs/go/models'
+import { models, requests } from '@/lib/wailsjs/go/models'
 import { GetRequests } from '@/lib/wailsjs/go/main/App'
 import Button from './ui/button/Button.vue'
 
-const requestsData = ref<main.Requests | null>(null)
+const requestsData = ref<models.Requests | null>(null)
 
 onMounted(async () => {
   requestsData.value = await GetRequests()
@@ -18,7 +18,7 @@ onMounted(async () => {
 
 const itemsMap = computed(() => {
   if (!requestsData.value || !requestsData.value.values) return {}
-  return requestsData.value.values as Record<string, main.Item>
+  return requestsData.value.values as Record<string, requests.Item>
 })
 
 const rootItems = computed(() => {
@@ -26,7 +26,7 @@ const rootItems = computed(() => {
   const map = itemsMap.value
   // Find root items (items that are not children of any folder)
   const allChildIds = new Set<string>()
-  Object.values(map).forEach((item: main.Item) => {
+  Object.values(map).forEach((item: requests.Item) => {
     if (item.children) {
       // children is array of UUID strings (after Wails regenerates, this will be string[])
       const childrenIds = Array.isArray(item.children)
@@ -36,8 +36,8 @@ const rootItems = computed(() => {
     }
   })
   return Object.entries(map)
-    .filter(([id]: [string, main.Item]) => !allChildIds.has(id))
-    .map(([id, item]: [string, main.Item]) => ({ id, item }))
+    .filter(([id]: [string, requests.Item]) => !allChildIds.has(id))
+    .map(([id, item]: [string, requests.Item]) => ({ id, item }))
 })
 
 defineProps<{
