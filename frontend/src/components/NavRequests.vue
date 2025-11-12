@@ -1,16 +1,43 @@
 <script setup lang="ts">
 import type { LucideIcon } from 'lucide-vue-next'
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import RequestNodeItem from '@/components/RequestNodeItem.vue'
 
 import { main } from '@/lib/wailsjs/go/models'
-import { Greet } from '@/lib/wailsjs/go/main/App'
+import { GetRequests } from '@/lib/wailsjs/go/main/App'
+import Button from './ui/button/Button.vue'
 
-const requests = ref<main.RequestNode[]>([])
+const requestsData = ref<main.Requests | null>(null)
 
 onMounted(async () => {
-  requests.value = await Greet()
-  console.log(requests.value)
+  requestsData.value = await GetRequests()
+  console.log('Requests data:', requestsData.value)
+  console.log('Items map:', itemsMap.value)
+  console.log('Root items:', rootItems.value)
+})
+
+const itemsMap = computed(() => {
+  if (!requestsData.value || !requestsData.value.values) return {}
+  return requestsData.value.values as Record<string, main.Item>
+})
+
+const rootItems = computed(() => {
+  if (!requestsData.value || !requestsData.value.values) return []
+  const map = itemsMap.value
+  // Find root items (items that are not children of any folder)
+  const allChildIds = new Set<string>()
+  Object.values(map).forEach((item: main.Item) => {
+    if (item.children) {
+      // children is array of UUID strings (after Wails regenerates, this will be string[])
+      const childrenIds = Array.isArray(item.children)
+        ? item.children.flat().map((id: unknown) => String(id))
+        : []
+      childrenIds.forEach((id: string) => allChildIds.add(id))
+    }
+  })
+  return Object.entries(map)
+    .filter(([id]: [string, main.Item]) => !allChildIds.has(id))
+    .map(([id, item]: [string, main.Item]) => ({ id, item }))
 })
 
 defineProps<{
@@ -28,7 +55,15 @@ defineProps<{
 </script>
 
 <template>
-  <div class="space-y-2 flex-1 flex-col">
-    <RequestNodeItem v-for="request in requests" :key="request.name" :node="request" />
+  <div class="space-y-1 flex-1 flex-col">
+    <RequestNodeItem
+      v-for="rootItem in rootItems"
+      :key="rootItem.id"
+      :item="rootItem.item"
+      :item-id="rootItem.id"
+      :items-map="itemsMap"
+    />
+    <Button variant="ghost" size="sm">Hello</Button>
+    <Button variant="ghost" class="w-full justify-center gap-2 !px-2">Hii</Button>
   </div>
 </template>

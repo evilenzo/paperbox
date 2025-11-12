@@ -1,19 +1,15 @@
-export namespace main {
+export namespace models {
 	
-	export class RequestNode {
-	    name: string;
-	    method: string;
-	    children?: RequestNode[];
+	export class Requests {
+	    values: Record<string, requests.Item>;
 	
 	    static createFrom(source: any = {}) {
-	        return new RequestNode(source);
+	        return new Requests(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.method = source["method"];
-	        this.children = this.convertValues(source["children"], RequestNode);
+	        this.values = this.convertValues(source["values"], requests.Item, true);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -33,6 +29,31 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace requests {
+	
+	export class Item {
+	    type: string;
+	    name: string;
+	    method?: string;
+	    path?: string;
+	    children?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Item(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.name = source["name"];
+	        this.method = source["method"];
+	        this.path = source["path"];
+	        this.children = source["children"];
+	    }
 	}
 
 }

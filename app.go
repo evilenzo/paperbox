@@ -2,80 +2,38 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
-	"os"
-	"path"
 
-	"github.com/adrg/xdg"
+	"paperbox/internal/app"
+	"paperbox/models"
 )
 
-var appDataDir = path.Join(xdg.DataHome, "paperbox")
-var configFile = path.Join(appDataDir, "config.json")
-
-type Request struct {
-	Name string `json:"name"`
-}
-
-type RequestNode struct {
-	Name     string        `json:"name"`
-	Method   string        `json:"method"`
-	Children []RequestNode `json:"children,omitempty"`
-}
-
-type Config struct {
-	Requests []RequestNode `json:"requests"`
-}
-
-// App struct
+// App is a thin wrapper for Wails bindings
 type App struct {
-	ctx    context.Context
-	config Config
+	app *app.App
 }
 
-// NewApp creates a new App application struct
+// NewApp creates a new App instance
 func NewApp() *App {
-	return &App{}
+	return &App{
+		app: app.New(),
+	}
 }
 
-// startup is called when the app starts. The context is saved
-// so we can call the runtime methods
+// startup initializes the application (called by Wails)
 func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
-
-	// Create app data directory if it doesn't exist.
-	if _, err := os.Stat(appDataDir); os.IsNotExist(err) {
-		err := os.MkdirAll(appDataDir, 0755)
-		if err != nil {
-			log.Fatalf("Failed to create app data directory: %v", err)
-		}
-	}
-
-	// Create config file if it doesn't exist.
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		err := os.WriteFile(configFile, []byte("{}"), 0644)
-		if err != nil {
-			log.Fatalf("Failed to create config file: %v", err)
-		}
-	}
-
-	// Read config file.
-	configFileContent, err := os.ReadFile(configFile)
-	if err != nil {
-		log.Fatalf("Failed to read config file: %v", err)
-	}
-
-	var config Config
-	err = json.Unmarshal(configFileContent, &config)
-
-	a.config = config
-
-	if err != nil {
-		log.Fatalf("Failed to unmarshal config file: %v", err)
+	if err := a.app.Startup(ctx); err != nil {
+		log.Fatalf("Failed to startup app: %v", err)
 	}
 }
 
-// Greet returns a greeting for the given name
-func (a *App) Greet() []RequestNode {
-	return a.config.Requests
+// GetRequests returns the requests for Wails bindings
+func (a *App) GetRequests() models.Requests {
+	requestsMap := a.app.GetRequests()
+	if requestsMap == nil {
+		return models.NewRequests()
+	}
+	return models.Requests{
+		Values: requestsMap,
+	}
 }

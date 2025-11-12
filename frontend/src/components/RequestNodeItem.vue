@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { main } from '@/lib/wailsjs/go/models'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Button } from '@/components/ui/button'
@@ -8,16 +8,16 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuSeparator,
   ContextMenuSub,
   ContextMenuSubContent,
   ContextMenuSubTrigger,
-  ContextMenuShortcut,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 
-defineProps<{
-  node: main.RequestNode
+const props = defineProps<{
+  item: main.Item
+  itemId: string
+  itemsMap: Record<string, main.Item>
   level?: number
 }>()
 
@@ -33,19 +33,36 @@ const methodColors: Record<string, string> = {
   HEAD: 'text-gray-700',
 }
 
-function getMethodColor(method: string) {
+function getMethodColor(method?: string) {
+  if (!method) return 'text-muted-foreground'
   return methodColors[method.toUpperCase()] ?? 'text-muted-foreground'
 }
+
+const childItems = computed((): Array<{ id: string; item: main.Item }> => {
+  if (props.item.type !== 'folder' || !props.item.children) return []
+  // children is array of UUID strings (after Wails regenerates, this will be string[])
+  const childrenIds = Array.isArray(props.item.children)
+    ? props.item.children.flat().map((id: unknown) => String(id))
+    : []
+  return childrenIds
+    .map((id: string) => ({ id, item: props.itemsMap[id] }))
+    .filter(
+      (entry: {
+        id: string
+        item: main.Item | undefined
+      }): entry is { id: string; item: main.Item } => entry.item !== undefined,
+    )
+})
 </script>
 
 <template>
-  <Collapsible v-if="node.children && node.children.length > 0" v-model:open="isOpen">
+  <Collapsible v-if="item.type === 'folder' && childItems.length > 0" v-model:open="isOpen">
     <ContextMenu>
       <ContextMenuTrigger as-child>
         <CollapsibleTrigger as-child>
           <Button variant="ghost" class="w-full justify-start gap-2 !px-2">
             <Folder class="size-4" />
-            <span class="font-normal">{{ node.name }}</span>
+            <span class="font-normal">{{ item.name }}</span>
             <ChevronRight
               :class="`ml-auto transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`"
             />
@@ -69,11 +86,13 @@ function getMethodColor(method: string) {
       </ContextMenuContent>
     </ContextMenu>
     <CollapsibleContent>
-      <div :class="`ml-${(level || 1) * 6}`">
+      <div :style="{ marginLeft: `${(level || 1) * 24}px` }" class="space-y-1">
         <RequestNodeItem
-          v-for="child in node.children"
-          :key="child.name"
-          :node="child"
+          v-for="child in childItems"
+          :key="child.id"
+          :item="child.item"
+          :item-id="child.id"
+          :items-map="itemsMap"
           :level="(level || 0) + 1"
         />
       </div>
@@ -82,17 +101,22 @@ function getMethodColor(method: string) {
 
   <ContextMenu v-else>
     <ContextMenuTrigger as-child>
-      <Button class="w-full justify-start !px-2" variant="ghost">
-        <span :class="`text-xs font-semibold ${getMethodColor(node.method)}`">{{
-          node.method
+      <Button class="w-full justify-start gap-2 !px-2" variant="ghost">
+        <Folder v-if="item.type === 'folder'" class="size-4" />
+        <span v-if="item.method" :class="`text-xs font-semibold ${getMethodColor(item.method)}`">{{
+          item.method
         }}</span>
-        <span class="font-normal">{{ node.name }}</span>
+        <span class="font-normal">{{ item.name }}</span>
       </Button>
     </ContextMenuTrigger>
     <ContextMenuContent>
-      <ContextMenuItem>
-        <span>Save</span>
-      </ContextMenuItem>
+      <ContextMenuSub v-if="item.type === 'folder'">
+        <ContextMenuSubTrigger>Add</ContextMenuSubTrigger>
+        <ContextMenuSubContent class="w-48">
+          <ContextMenuItem>Request</ContextMenuItem>
+          <ContextMenuItem>Folder</ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
       <ContextMenuItem>
         <span>Rename</span>
       </ContextMenuItem>
