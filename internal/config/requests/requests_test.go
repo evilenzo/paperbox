@@ -36,6 +36,41 @@ func TestValidateConfig(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "request at root level should fail",
+			config: &RequestsConfig{
+				Version: 1,
+				Values: map[string]Item{
+					"req1": {
+						Type:   ItemTypeRequest,
+						Name:   "Get Users",
+						Method: "GET",
+						Path:   "/api/users",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "root level item 'req1' must be a folder",
+		},
+		{
+			name: "multiple folders at root level should be valid",
+			config: &RequestsConfig{
+				Version: 1,
+				Values: map[string]Item{
+					"folder1": {
+						Type:     ItemTypeFolder,
+						Name:     "API",
+						Children: []string{},
+					},
+					"folder2": {
+						Type:     ItemTypeFolder,
+						Name:     "Tests",
+						Children: []string{},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name: "request with children should fail",
 			config: &RequestsConfig{
 				Version: 1,
@@ -92,6 +127,11 @@ func TestValidateConfig(t *testing.T) {
 						Name: "Get Users",
 						Path: "/api/users",
 					},
+					"folder1": {
+						Type:     ItemTypeFolder,
+						Name:     "API",
+						Children: []string{"req1"},
+					},
 				},
 			},
 			wantErr: true,
@@ -106,6 +146,11 @@ func TestValidateConfig(t *testing.T) {
 						Type:   ItemTypeRequest,
 						Name:   "Get Users",
 						Method: "GET",
+					},
+					"folder1": {
+						Type:     ItemTypeFolder,
+						Name:     "API",
+						Children: []string{"req1"},
 					},
 				},
 			},
@@ -122,6 +167,11 @@ func TestValidateConfig(t *testing.T) {
 						Name:   "Get Users",
 						Method: "INVALID",
 						Path:   "/api/users",
+					},
+					"folder1": {
+						Type:     ItemTypeFolder,
+						Name:     "API",
+						Children: []string{"req1"},
 					},
 				},
 			},
@@ -169,6 +219,11 @@ func TestValidateConfig(t *testing.T) {
 						Method: "GET",
 						Path:   "/api/users",
 					},
+					"folder1": {
+						Type:     ItemTypeFolder,
+						Name:     "API",
+						Children: []string{"req1"},
+					},
 				},
 			},
 			wantErr: true,
@@ -187,6 +242,72 @@ func TestValidateConfig(t *testing.T) {
 			},
 			wantErr: true,
 			errMsg:  "type must be one of",
+		},
+		{
+			name: "maximum nesting depth (3 folders) should be valid",
+			config: &RequestsConfig{
+				Version: 1,
+				Values: map[string]Item{
+					"root": {
+						Type:     ItemTypeFolder,
+						Name:     "Root",
+						Children: []string{"nested1"},
+					},
+					"nested1": {
+						Type:     ItemTypeFolder,
+						Name:     "Nested 1",
+						Children: []string{"nested2"},
+					},
+					"nested2": {
+						Type:     ItemTypeFolder,
+						Name:     "Nested 2",
+						Children: []string{"req1"},
+					},
+					"req1": {
+						Type:   ItemTypeRequest,
+						Name:   "Request",
+						Method: "GET",
+						Path:   "/api/test",
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "exceeding maximum nesting depth (4 folders) should fail",
+			config: &RequestsConfig{
+				Version: 1,
+				Values: map[string]Item{
+					"root": {
+						Type:     ItemTypeFolder,
+						Name:     "Root",
+						Children: []string{"nested1"},
+					},
+					"nested1": {
+						Type:     ItemTypeFolder,
+						Name:     "Nested 1",
+						Children: []string{"nested2"},
+					},
+					"nested2": {
+						Type:     ItemTypeFolder,
+						Name:     "Nested 2",
+						Children: []string{"nested3"},
+					},
+					"nested3": {
+						Type:     ItemTypeFolder,
+						Name:     "Nested 3",
+						Children: []string{"req1"},
+					},
+					"req1": {
+						Type:   ItemTypeRequest,
+						Name:   "Request",
+						Method: "GET",
+						Path:   "/api/test",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "cannot contain nested folders",
 		},
 	}
 
@@ -360,6 +481,7 @@ func TestConfigVersioning(t *testing.T) {
 	}()
 
 	// Test loading config without version (old format)
+	// Note: request must be inside a folder to be valid
 	oldFormatJSON := `{
 		"values": {
 			"req1": {
@@ -367,6 +489,11 @@ func TestConfigVersioning(t *testing.T) {
 				"name": "Test",
 				"method": "GET",
 				"path": "/test"
+			},
+			"folder1": {
+				"type": "folder",
+				"name": "Test Folder",
+				"children": ["req1"]
 			}
 		}
 	}`
@@ -384,9 +511,9 @@ func TestConfigVersioning(t *testing.T) {
 		t.Errorf("Load() migrated version = %v, want %v", config.Version, CurrentVersion)
 	}
 
-	// Verify data is preserved
-	if len(config.Values) != 1 {
-		t.Errorf("Load() values count = %v, want 1", len(config.Values))
+	// Verify data is preserved (should have both request and folder)
+	if len(config.Values) != 2 {
+		t.Errorf("Load() values count = %v, want 2", len(config.Values))
 	}
 }
 

@@ -36,7 +36,10 @@ const rootItems = computed(() => {
     }
   })
   return Object.entries(map)
-    .filter(([id]: [string, requests.Item]) => !allChildIds.has(id))
+    .filter(([id, item]: [string, requests.Item]) => {
+      // Only show folders at root level
+      return !allChildIds.has(id) && item.type === 'folder'
+    })
     .map(([id, item]: [string, requests.Item]) => ({ id, item }))
 })
 

@@ -53,6 +53,13 @@ const childItems = computed((): Array<{ id: string; item: requests.Item }> => {
       }): entry is { id: string; item: requests.Item } => entry.item !== undefined,
     )
 })
+
+// Check if we can add a folder (max 3 levels: root(0) -> nested(1) -> nested(2) -> request)
+// level >= 2 means we're at the third folder level, so we can't add more folders
+const canAddFolder = computed(() => {
+  const currentLevel = props.level ?? 0
+  return currentLevel < 2
+})
 </script>
 
 <template>
@@ -74,7 +81,7 @@ const childItems = computed((): Array<{ id: string; item: requests.Item }> => {
           <ContextMenuSubTrigger>Add</ContextMenuSubTrigger>
           <ContextMenuSubContent class="w-48">
             <ContextMenuItem>Request</ContextMenuItem>
-            <ContextMenuItem>Folder</ContextMenuItem>
+            <ContextMenuItem v-if="canAddFolder">Folder</ContextMenuItem>
           </ContextMenuSubContent>
         </ContextMenuSub>
         <ContextMenuItem>
@@ -114,7 +121,7 @@ const childItems = computed((): Array<{ id: string; item: requests.Item }> => {
         <ContextMenuSubTrigger>Add</ContextMenuSubTrigger>
         <ContextMenuSubContent class="w-48">
           <ContextMenuItem>Request</ContextMenuItem>
-          <ContextMenuItem>Folder</ContextMenuItem>
+          <ContextMenuItem v-if="canAddFolder">Folder</ContextMenuItem>
         </ContextMenuSubContent>
       </ContextMenuSub>
       <ContextMenuItem>
