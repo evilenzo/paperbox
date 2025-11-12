@@ -2,6 +2,7 @@
 import type { LucideIcon } from 'lucide-vue-next'
 import { onMounted, ref, computed } from 'vue'
 import RequestNodeItem from '@/components/RequestNodeItem.vue'
+import { FolderPlus, Search, RefreshCw } from 'lucide-vue-next'
 
 import { models, requests } from '@/lib/wailsjs/go/models'
 import { GetRequests } from '@/lib/wailsjs/go/main/App'
@@ -59,6 +60,17 @@ defineProps<{
 
 <template>
   <div class="space-y-1 flex-1 flex-col">
+    <div class="flex gap-1">
+      <Button variant="ghost" class="flex-1 justify-center !px-2">
+        <FolderPlus class="size-4" />
+      </Button>
+      <Button variant="ghost" class="flex-1 justify-center !px-2">
+        <Search class="size-4" />
+      </Button>
+      <Button variant="ghost" class="flex-1 justify-center !px-2">
+        <RefreshCw class="size-4" />
+      </Button>
+    </div>
     <RequestNodeItem
       v-for="rootItem in rootItems"
       :key="rootItem.id"
@@ -66,7 +78,5 @@ defineProps<{
       :item-id="rootItem.id"
       :items-map="itemsMap"
     />
-    <Button variant="ghost" size="sm">Hello</Button>
-    <Button variant="ghost" class="w-full justify-center gap-2 !px-2">Hii</Button>
   </div>
 </template>
