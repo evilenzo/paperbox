@@ -3,7 +3,6 @@ package requests
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path"
 
@@ -71,15 +70,6 @@ func Load() (*RequestsConfig, error) {
 		err := os.MkdirAll(appDataDir, 0755)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create app data directory: %w", err)
-		}
-	}
-
-	// Migrate from old config.json if it exists
-	oldConfigFile := path.Join(appDataDir, "config.json")
-	if _, err := os.Stat(oldConfigFile); err == nil {
-		// Old config exists, migrate it
-		if err := migrateFromOldConfig(oldConfigFile); err != nil {
-			log.Printf("Warning: failed to migrate old config.json: %v", err)
 		}
 	}
 
@@ -163,9 +153,7 @@ func migrateConfig(config *RequestsConfig) error {
 		}
 		config.Version = CurrentVersion
 		// Save migrated config
-		if err := Save(config); err != nil {
-			log.Printf("Warning: failed to save migrated requests config: %v", err)
-		}
+		_ = Save(config) // Ignore errors, continue with default config
 	}
 
 	return nil
@@ -181,48 +169,6 @@ func migrateFromVersion(config *RequestsConfig, fromVersion int) error {
 	default:
 		return fmt.Errorf("unknown migration from version %d", fromVersion)
 	}
-}
-
-// migrateFromOldConfig migrates from old config.json to requests.json
-func migrateFromOldConfig(oldConfigPath string) error {
-	// Read old config
-	data, err := os.ReadFile(oldConfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to read old config: %w", err)
-	}
-
-	// Parse old config (it has the same structure)
-	var config RequestsConfig
-	if err := json.Unmarshal(data, &config); err != nil {
-		return fmt.Errorf("failed to parse old config: %w", err)
-	}
-
-	// Ensure version is set
-	if config.Version == 0 {
-		config.Version = CurrentVersion
-	}
-
-	// Migrate if needed
-	if err := migrateConfig(&config); err != nil {
-		return fmt.Errorf("failed to migrate old config: %w", err)
-	}
-
-	// Validate
-	if err := Validate(&config); err != nil {
-		return fmt.Errorf("old config validation failed: %w", err)
-	}
-
-	// Save to new location
-	if err := Save(&config); err != nil {
-		return fmt.Errorf("failed to save migrated config: %w", err)
-	}
-
-	// Remove old config file
-	if err := os.Remove(oldConfigPath); err != nil {
-		log.Printf("Warning: failed to remove old config.json: %v", err)
-	}
-
-	return nil
 }
 
 // MarshalRequests marshals a map of items to JSON (for Requests structure)

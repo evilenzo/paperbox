@@ -1,44 +1,66 @@
 package config
 
 import (
+	"context"
 	"fmt"
 
+	"paperbox/internal/config/base"
 	"paperbox/internal/config/requests"
+	"paperbox/internal/config/user"
+
+	"github.com/wailsapp/wails/v2/pkg/logger"
 )
 
 // Manager manages all application configurations
+// It aggregates all config managers and provides a unified interface
 type Manager struct {
-	requests *requests.RequestsConfig
+	logger   logger.Logger
+	managers []base.ConfigManager
+	requests *requests.Manager
+	user     *user.Manager
 }
 
 // NewManager creates a new config manager
 func NewManager() *Manager {
-	return &Manager{}
+	reqMgr := requests.NewManager()
+	userMgr := user.NewManager()
+
+	return &Manager{
+		managers: []base.ConfigManager{reqMgr, userMgr},
+		requests: reqMgr,
+		user:     userMgr,
+	}
 }
 
 // LoadAll loads all configurations
 func (m *Manager) LoadAll() error {
-	// Load requests config
-	reqConfig, err := requests.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load requests config: %w", err)
+	for _, mgr := range m.managers {
+		if err := mgr.Load(); err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
 	}
-	m.requests = reqConfig
-
-	// TODO: Load other configs here (user config, etc.)
-
 	return nil
 }
 
-// GetRequests returns the requests configuration
-func (m *Manager) GetRequests() *requests.RequestsConfig {
+// SetContext sets the Wails runtime context for all config managers
+func (m *Manager) SetContext(ctx context.Context, log logger.Logger) {
+	m.logger = log
+	for _, mgr := range m.managers {
+		mgr.SetContext(ctx, log)
+	}
+}
+
+// Requests returns the requests config manager
+func (m *Manager) Requests() *requests.Manager {
 	return m.requests
 }
 
-// SaveRequests saves the requests configuration
-func (m *Manager) SaveRequests() error {
-	if m.requests == nil {
-		return fmt.Errorf("requests config is not loaded")
-	}
-	return requests.Save(m.requests)
+// User returns the user config manager
+func (m *Manager) User() *user.Manager {
+	return m.user
+}
+
+// GetRequests returns the requests configuration (for backward compatibility)
+func (m *Manager) GetRequests() *requests.RequestsConfig {
+	return m.requests.GetRequestsConfig()
 }
