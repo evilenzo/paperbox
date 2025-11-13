@@ -42,7 +42,8 @@ func (a *App) GetRequests() models.Requests {
 		return models.NewRequests()
 	}
 	return models.Requests{
-		Values: reqConfig.Values,
+		Values:    reqConfig.Values,
+		RootOrder: reqConfig.RootOrder,
 	}
 }
 

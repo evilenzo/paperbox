@@ -12,7 +12,7 @@ import (
 
 const (
 	// CurrentVersion is the current version of the requests config format
-	CurrentVersion = 1
+	CurrentVersion = 2
 	// RequestsFileName is the name of the requests config file
 	RequestsFileName = "requests.json"
 )
@@ -51,8 +51,9 @@ type Item struct {
 
 // RequestsConfig represents the requests configuration
 type RequestsConfig struct {
-	Version int             `json:"version" validate:"required,min=1"`
-	Values  map[string]Item `json:"values" validate:"required,dive,keys,required,endkeys"`
+	Version   int             `json:"version" validate:"required,min=1"`
+	Values    map[string]Item `json:"values" validate:"required,dive,keys,required,endkeys"`
+	RootOrder []string        `json:"rootOrder,omitempty" validate:"omitempty,dive,required"`
 }
 
 // NewRequestsConfig creates a new empty requests config
@@ -165,6 +166,31 @@ func migrateFromVersion(config *RequestsConfig, fromVersion int) error {
 	case 0:
 		// Migration from version 0 to 1
 		// No changes needed, just version field addition
+		return nil
+	case 1:
+		// Migration from version 1 to 2
+		// Initialize RootOrder with current root items
+		if config.RootOrder == nil {
+			config.RootOrder = []string{}
+		}
+		// Find all root items and add them to RootOrder if not already present
+		allChildIds := make(map[string]bool)
+		for _, item := range config.Values {
+			if item.Children != nil {
+				for _, childID := range item.Children {
+					allChildIds[childID] = true
+				}
+			}
+		}
+		existingOrder := make(map[string]bool)
+		for _, id := range config.RootOrder {
+			existingOrder[id] = true
+		}
+		for id, item := range config.Values {
+			if !allChildIds[id] && item.Type == ItemTypeFolder && !existingOrder[id] {
+				config.RootOrder = append(config.RootOrder, id)
+			}
+		}
 		return nil
 	default:
 		return fmt.Errorf("unknown migration from version %d", fromVersion)

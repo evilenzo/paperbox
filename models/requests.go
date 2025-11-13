@@ -9,7 +9,8 @@ type Item = requests.Item
 
 // Requests represents the requests structure for Wails bindings
 type Requests struct {
-	Values map[string]Item `json:"values"`
+	Values    map[string]Item `json:"values"`
+	RootOrder []string        `json:"rootOrder,omitempty"`
 }
 
 // NewRequests creates a new empty Requests structure

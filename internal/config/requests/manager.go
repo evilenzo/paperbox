@@ -100,8 +100,9 @@ func (m *Manager) PatchValues(values map[string]Item) error {
 
 		// Emit event with proper format
 		eventData := map[string]interface{}{
-			"version": cfg.Version,
-			"values":  cfg.Values,
+			"version":   cfg.Version,
+			"values":    cfg.Values,
+			"rootOrder": cfg.RootOrder,
 		}
 		if ctx != nil {
 			runtime.LogInfo(ctx, fmt.Sprintf("About to emit requests:updated event with %d items", len(cfg.Values)))
@@ -153,8 +154,9 @@ func (m *Manager) AddRequest(parentId string, name string, method string, path s
 
 		// Emit updated event
 		eventData := map[string]interface{}{
-			"version": cfg.Version,
-			"values":  cfg.Values,
+			"version":   cfg.Version,
+			"values":    cfg.Values,
+			"rootOrder": cfg.RootOrder,
 		}
 		m.Events().Updated("requests:updated", eventData)
 
@@ -201,8 +203,9 @@ func (m *Manager) AddFolder(parentId string, name string) (string, error) {
 
 		// Emit updated event
 		eventData := map[string]interface{}{
-			"version": cfg.Version,
-			"values":  cfg.Values,
+			"version":   cfg.Version,
+			"values":    cfg.Values,
+			"rootOrder": cfg.RootOrder,
 		}
 		m.Events().Updated("requests:updated", eventData)
 
@@ -233,10 +236,18 @@ func (m *Manager) AddRootFolder(name string) (string, error) {
 		}
 		cfg.Values[newId] = newItem
 
+		// Initialize RootOrder if nil
+		if cfg.RootOrder == nil {
+			cfg.RootOrder = []string{}
+		}
+		// Add new folder ID to the beginning of RootOrder
+		cfg.RootOrder = append([]string{newId}, cfg.RootOrder...)
+
 		// Emit updated event
 		eventData := map[string]interface{}{
-			"version": cfg.Version,
-			"values":  cfg.Values,
+			"version":   cfg.Version,
+			"values":    cfg.Values,
+			"rootOrder": cfg.RootOrder,
 		}
 		m.Events().Updated("requests:updated", eventData)
 
@@ -284,10 +295,22 @@ func (m *Manager) DeleteItem(itemId string) error {
 		// Delete the item itself
 		delete(cfg.Values, itemId)
 
+		// Remove from RootOrder if it's a root-level folder
+		if cfg.RootOrder != nil {
+			newRootOrder := []string{}
+			for _, id := range cfg.RootOrder {
+				if id != itemId {
+					newRootOrder = append(newRootOrder, id)
+				}
+			}
+			cfg.RootOrder = newRootOrder
+		}
+
 		// Emit updated event
 		eventData := map[string]interface{}{
-			"version": cfg.Version,
-			"values":  cfg.Values,
+			"version":   cfg.Version,
+			"values":    cfg.Values,
+			"rootOrder": cfg.RootOrder,
 		}
 		m.Events().Updated("requests:updated", eventData)
 

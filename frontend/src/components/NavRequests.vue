@@ -22,9 +22,12 @@ interface RequestsUpdatedEvent {
   version?: number
   values?: Record<string, requests.Item>
   Values?: Record<string, requests.Item>
+  rootOrder?: string[]
+  RootOrder?: string[]
 }
 
 const requestsData = ref<models.Requests | null>(null)
+const rootOrder = ref<string[]>([])
 const error = ref<string | null>(null)
 const addingRequestTo = ref<string | null>(null)
 const addingFolderTo = ref<string | null>(null)
@@ -34,7 +37,9 @@ const newRootFolderInput = ref('')
 // Load requests from backend
 async function loadRequests() {
   try {
-    requestsData.value = await GetRequests()
+    const data = await GetRequests()
+    requestsData.value = data
+    rootOrder.value = data.rootOrder || []
     error.value = null
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load requests'
@@ -54,6 +59,7 @@ function setupEventListeners() {
     // Convert to Requests format using the model's createFrom method
     if (updatedConfig) {
       const values = updatedConfig.values || updatedConfig.Values || {}
+      const order = updatedConfig.rootOrder || updatedConfig.RootOrder || []
       LogInfo(`Updating requestsData with ${Object.keys(values).length} items`)
 
       // Log the item being renamed to verify it's in the update
@@ -72,6 +78,7 @@ function setupEventListeners() {
 
       // Force reactivity by creating a new object reference
       requestsData.value = newRequests
+      rootOrder.value = Array.isArray(order) ? [...order] : []
 
       LogInfo(
         `requestsData updated, ${requestsData.value?.values ? Object.keys(requestsData.value.values).length : 0} items`,
@@ -143,12 +150,28 @@ const rootItems = computed(() => {
       childrenIds.forEach((id: string) => allChildIds.add(id))
     }
   })
-  return Object.entries(map)
+  const items = Object.entries(map)
     .filter(([id, item]: [string, requests.Item]) => {
       // Only show folders at root level
       return !allChildIds.has(id) && item.type === 'folder'
     })
     .map(([id, item]: [string, requests.Item]) => ({ id, item }))
+
+  // Sort by rootOrder if available, otherwise by name
+  if (rootOrder.value && rootOrder.value.length > 0) {
+    const orderMap = new Map<string, number>()
+    rootOrder.value.forEach((id, index) => {
+      orderMap.set(id, index)
+    })
+    return items.sort((a, b) => {
+      const aOrder = orderMap.get(a.id) ?? Infinity
+      const bOrder = orderMap.get(b.id) ?? Infinity
+      return aOrder - bOrder
+    })
+  }
+
+  // Fallback: sort by name in reverse alphabetical order
+  return items.sort((a, b) => b.item.name.localeCompare(a.item.name))
 })
 
 // Update requests config

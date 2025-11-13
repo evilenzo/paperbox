@@ -2,6 +2,7 @@ export namespace models {
 	
 	export class Requests {
 	    values: Record<string, requests.Item>;
+	    rootOrder?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Requests(source);
@@ -10,6 +11,7 @@ export namespace models {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.values = this.convertValues(source["values"], requests.Item, true);
+	        this.rootOrder = source["rootOrder"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
