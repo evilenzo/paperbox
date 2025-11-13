@@ -1,4 +1,4 @@
-package base
+package configutil
 
 import (
 	"encoding/json"
@@ -6,7 +6,6 @@ import (
 )
 
 // PatchConfig applies a partial update to a config struct using JSON marshal/unmarshal
-// This is a helper function that can be used by any config manager
 func PatchConfig(current interface{}, patch map[string]interface{}) (interface{}, error) {
 	// Convert current config to map for merging
 	configJSON, err := json.Marshal(current)
@@ -40,3 +39,4 @@ func UnmarshalPatchedConfig(patchedMap map[string]interface{}, target interface{
 
 	return nil
 }
+

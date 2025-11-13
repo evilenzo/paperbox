@@ -8,4 +8,4 @@ export function AddRequest(arg1:string,arg2:string,arg3:string,arg4:string):Prom
 
 export function GetRequests():Promise<models.Requests>;
 
-export function SetRequestsPatch(arg1:Record<string, any>):Promise<void>;
+export function SetRequestsPatch(arg1:models.RequestsPatch):Promise<void>;

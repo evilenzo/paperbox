@@ -142,19 +142,14 @@ const rootItems = computed(() => {
 // Update requests config
 async function updateRequests(newValues: Record<string, requests.Item>) {
   try {
-    const patch = { values: newValues }
+    const patch = models.RequestsPatch.createFrom({ values: newValues })
     LogInfo(`Calling SetRequestsPatch with patch containing ${Object.keys(newValues).length} items`)
-    LogInfo(
-      `Patch structure: ${JSON.stringify(Object.keys(patch))}, values keys: ${Object.keys(newValues).slice(0, 3).join(', ')}...`,
-    )
 
-    const result = await SetRequestsPatch(patch)
-    LogInfo(`SetRequestsPatch completed successfully, result: ${result}`)
+    await SetRequestsPatch(patch)
+    LogInfo('SetRequestsPatch completed successfully')
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err)
-    const errorStack = err instanceof Error ? err.stack : 'No stack trace'
     LogError(`Failed to update requests: ${errorMessage}`)
-    LogError(`Error stack: ${errorStack}`)
     error.value = errorMessage
     throw err
   }

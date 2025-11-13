@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"paperbox/internal/config/base"
 	"paperbox/internal/config/requests"
 	"paperbox/internal/config/user"
 
@@ -14,8 +13,7 @@ import (
 // Manager manages all application configurations
 // It aggregates all config managers and provides a unified interface
 type Manager struct {
-	logger   logger.Logger
-	managers []base.ConfigManager
+	managers []ManagerInterface
 	requests *requests.Manager
 	user     *user.Manager
 }
@@ -26,7 +24,7 @@ func NewManager() *Manager {
 	userMgr := user.NewManager()
 
 	return &Manager{
-		managers: []base.ConfigManager{reqMgr, userMgr},
+		managers: []ManagerInterface{reqMgr, userMgr},
 		requests: reqMgr,
 		user:     userMgr,
 	}
@@ -44,7 +42,6 @@ func (m *Manager) LoadAll() error {
 
 // SetContext sets the Wails runtime context for all config managers
 func (m *Manager) SetContext(ctx context.Context, log logger.Logger) {
-	m.logger = log
 	for _, mgr := range m.managers {
 		mgr.SetContext(ctx, log)
 	}

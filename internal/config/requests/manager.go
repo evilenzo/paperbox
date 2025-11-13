@@ -3,8 +3,9 @@ package requests
 import (
 	"context"
 	"fmt"
+	"sync"
 
-	"paperbox/internal/config/base"
+	"paperbox/internal/configutil"
 
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/logger"
@@ -13,8 +14,12 @@ import (
 
 // Manager manages the requests configuration with in-memory state and debounced saves
 type Manager struct {
-	*base.BaseManager
-	config *RequestsConfig
+	mu         sync.RWMutex
+	storage    configutil.Storage
+	events     *configutil.Events
+	debounce   *configutil.Debounce
+	config     *RequestsConfig
+	configFile string
 }
 
 // getMapKeys returns a slice of keys from a map
@@ -29,7 +34,20 @@ func getMapKeys(m map[string]interface{}) []string {
 // NewManager creates a new requests config manager
 func NewManager() *Manager {
 	return &Manager{
-		BaseManager: base.NewBaseManager(getRequestsFilePath()),
+		storage:    configutil.NewFileStorage(),
+		events:     configutil.NewEvents(context.TODO()),
+		debounce:   configutil.NewDebounce(configutil.DefaultDebounceDuration),
+		configFile: getRequestsFilePath(),
+	}
+}
+
+// NewManagerWithStorage creates a new requests config manager with custom storage (for testing)
+func NewManagerWithStorage(storage configutil.Storage) *Manager {
+	return &Manager{
+		storage:    storage,
+		events:     configutil.NewEvents(context.TODO()),
+		debounce:   configutil.NewDebounce(configutil.DefaultDebounceDuration),
+		configFile: getRequestsFilePath(),
 	}
 }
 
@@ -38,34 +56,29 @@ func getRequestsFilePath() string {
 	return requestsFile
 }
 
-// Ensure Manager implements base.ConfigManager interface
-var _ base.ConfigManager = (*Manager)(nil)
-
 // SetContext sets the Wails runtime context for emitting events
 func (m *Manager) SetContext(ctx context.Context, log logger.Logger) {
-	m.BaseManager.SetContext(ctx, log)
+	m.events.SetContext(ctx)
 }
 
 // Load loads the configuration from file
 func (m *Manager) Load() error {
-	mu := m.GetMutex()
-	mu.Lock()
-	defer mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	config, err := Load()
+	cfg, err := Load()
 	if err != nil {
 		return err
 	}
 
-	m.config = config
+	m.config = cfg
 	return nil
 }
 
 // Get returns a copy of the current configuration
 func (m *Manager) Get() interface{} {
-	mu := m.GetMutex()
-	mu.RLock()
-	defer mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	if m.config == nil {
 		return NewRequestsConfig()
@@ -85,74 +98,40 @@ func (m *Manager) Get() interface{} {
 // GetRequestsConfig returns the requests config (type-safe version)
 func (m *Manager) GetRequestsConfig() *RequestsConfig {
 	result := m.Get()
-	if config, ok := result.(*RequestsConfig); ok {
-		return config
+	if cfg, ok := result.(*RequestsConfig); ok {
+		return cfg
 	}
 	return NewRequestsConfig()
 }
 
-// Patch applies a partial update to the configuration
-func (m *Manager) Patch(patch map[string]interface{}) error {
-	// Log immediately to verify method is called
-	fmt.Printf("[DEBUG] Patch method called in requests manager\n")
+// PatchValues applies a partial update to the requests configuration using typed values
+func (m *Manager) PatchValues(values map[string]Item) error {
+	// Get context BEFORE locking to avoid deadlock
+	ctx := m.events.GetContext()
 
-	// Get context BEFORE locking to avoid deadlock (GetContext uses RLock on the same mutex)
-	ctx := m.GetContext()
-	fmt.Printf("[DEBUG] Patch: ctx is nil: %v\n", ctx == nil)
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	mu := m.GetMutex()
-	fmt.Printf("[DEBUG] Patch: about to lock mutex\n")
-	mu.Lock()
-	fmt.Printf("[DEBUG] Patch: mutex locked\n")
-	defer mu.Unlock()
 	if ctx != nil {
-		fmt.Printf("[DEBUG] Patch: ctx is not nil, logging via runtime\n")
-		runtime.LogInfo(ctx, fmt.Sprintf("Patch called with patch keys: %v", getMapKeys(patch)))
-		// Log patch values structure
-		if values, ok := patch["values"].(map[string]interface{}); ok {
-			fmt.Printf("[DEBUG] Patch: values is map[string]interface{}, contains %d items\n", len(values))
-			runtime.LogInfo(ctx, fmt.Sprintf("Patch values contains %d items", len(values)))
-			// Log first few keys
-			count := 0
-			for key := range values {
-				if count < 3 {
-					runtime.LogInfo(ctx, fmt.Sprintf("Patch value key: %s", key))
-					count++
-				}
-			}
-		} else {
-			fmt.Printf("[DEBUG] Patch: values is NOT map[string]interface{}\n")
-			runtime.LogError(ctx, "Patch values is not a map[string]interface{}")
-		}
-	} else {
-		fmt.Printf("[DEBUG] Patch: ctx is nil, skipping runtime logging\n")
+		runtime.LogInfo(ctx, fmt.Sprintf("PatchValues called with %d items", len(values)))
 	}
 
 	if m.config == nil {
 		if ctx != nil {
-			runtime.LogError(ctx, "Patch: config is not loaded")
+			runtime.LogError(ctx, "PatchValues: config is not loaded")
 		}
-		fmt.Printf("[DEBUG] Patch: config is nil\n")
 		return fmt.Errorf("config is not loaded")
 	}
-	fmt.Printf("[DEBUG] Patch: config loaded, proceeding with patch\n")
 
-	// Use base helper for patching
-	configMap, err := base.PatchConfig(m.config, patch)
-	if err != nil {
-		if ctx != nil {
-			runtime.LogError(ctx, fmt.Sprintf("Patch failed: %v", err))
-		}
-		return err
+	// Create a copy of current config
+	mergedConfig := *m.config
+	if mergedConfig.Values == nil {
+		mergedConfig.Values = make(map[string]Item)
 	}
 
-	// Convert back to RequestsConfig struct
-	var mergedConfig RequestsConfig
-	if err := base.UnmarshalPatchedConfig(configMap.(map[string]interface{}), &mergedConfig); err != nil {
-		if ctx != nil {
-			runtime.LogError(ctx, fmt.Sprintf("UnmarshalPatchedConfig failed: %v", err))
-		}
-		return err
+	// Merge values into config
+	for k, v := range values {
+		mergedConfig.Values[k] = v
 	}
 
 	// Ensure version is preserved
@@ -179,34 +158,34 @@ func (m *Manager) Patch(patch map[string]interface{}) error {
 		"values":  m.config.Values,
 	}
 	// Emit requests:updated event for optimistic UI update
-	// Use ctx directly to avoid deadlock (EmitUpdatedWithName would call GetContext() which needs RLock)
 	if ctx != nil {
 		runtime.LogInfo(ctx, fmt.Sprintf("About to emit requests:updated event with %d items", len(m.config.Values)))
-		// Log a sample item to verify it's updated
-		for id, item := range m.config.Values {
-			runtime.LogInfo(ctx, fmt.Sprintf("Sample item in event: %s, name=\"%s\"", id, item.Name))
-			break // Only log first item
-		}
-		runtime.LogInfo(ctx, "Emitting event: requests:updated")
 		runtime.EventsEmit(ctx, "requests:updated", eventData)
 		runtime.LogInfo(ctx, "Event requests:updated emitted")
-	} else {
-		fmt.Printf("[DEBUG] Patch: ctx is nil, cannot emit event\n")
 	}
 
 	// Schedule save with debounce
-	m.ScheduleSave(func() error {
-		return m.save()
-	}, "requests")
+	m.debounce.Schedule(func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if err := m.saveLocked(); err != nil {
+			if ctx != nil {
+				m.events.EmitError("requests:error", err.Error())
+			}
+		} else {
+			if ctx != nil {
+				m.events.EmitSaved("requests:saved", m.configFile)
+			}
+		}
+	})
 
 	return nil
 }
 
 // AddRequest adds a new request to a parent folder
 func (m *Manager) AddRequest(parentId string, name string, method string, path string) (string, error) {
-	mu := m.GetMutex()
-	mu.Lock()
-	defer mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if m.config == nil {
 		return "", fmt.Errorf("config is not loaded")
@@ -243,21 +222,35 @@ func (m *Manager) AddRequest(parentId string, name string, method string, path s
 	}
 
 	// Emit updated event
-	m.EmitUpdatedWithName("requests:updated", m.config)
+	eventData := map[string]interface{}{
+		"version": m.config.Version,
+		"values":  m.config.Values,
+	}
+	m.events.EmitUpdated("requests:updated", eventData)
 
 	// Schedule save with debounce
-	m.ScheduleSave(func() error {
-		return m.save()
-	}, "requests")
+	ctx := m.events.GetContext()
+	m.debounce.Schedule(func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if err := m.saveLocked(); err != nil {
+			if ctx != nil {
+				m.events.EmitError("requests:error", err.Error())
+			}
+		} else {
+			if ctx != nil {
+				m.events.EmitSaved("requests:saved", m.configFile)
+			}
+		}
+	})
 
 	return newId, nil
 }
 
 // AddFolder adds a new folder to a parent folder
 func (m *Manager) AddFolder(parentId string, name string) (string, error) {
-	mu := m.GetMutex()
-	mu.Lock()
-	defer mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if m.config == nil {
 		return "", fmt.Errorf("config is not loaded")
@@ -293,21 +286,35 @@ func (m *Manager) AddFolder(parentId string, name string) (string, error) {
 	}
 
 	// Emit updated event
-	m.EmitUpdatedWithName("requests:updated", m.config)
+	eventData := map[string]interface{}{
+		"version": m.config.Version,
+		"values":  m.config.Values,
+	}
+	m.events.EmitUpdated("requests:updated", eventData)
 
 	// Schedule save with debounce
-	m.ScheduleSave(func() error {
-		return m.save()
-	}, "requests")
+	ctx := m.events.GetContext()
+	m.debounce.Schedule(func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if err := m.saveLocked(); err != nil {
+			if ctx != nil {
+				m.events.EmitError("requests:error", err.Error())
+			}
+		} else {
+			if ctx != nil {
+				m.events.EmitSaved("requests:saved", m.configFile)
+			}
+		}
+	})
 
 	return newId, nil
 }
 
 // Save saves the configuration to file
 func (m *Manager) Save() error {
-	mu := m.GetMutex()
-	mu.Lock()
-	defer mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if m.config == nil {
 		return fmt.Errorf("config is not loaded")
@@ -318,9 +325,10 @@ func (m *Manager) Save() error {
 
 // saveLocked saves the configuration to file (must be called with lock held)
 func (m *Manager) saveLocked() error {
-	return base.SaveJSONConfig(
+	return configutil.SaveJSONConfig(
+		m.storage,
 		m.config,
-		getRequestsFilePath(),
+		m.configFile,
 		0o644,
 		func() {
 			if m.config.Version == 0 {
@@ -328,13 +336,4 @@ func (m *Manager) saveLocked() error {
 			}
 		},
 	)
-}
-
-// save saves the configuration to file (internal, assumes lock is held)
-func (m *Manager) save() error {
-	if m.config == nil {
-		return fmt.Errorf("config is not loaded")
-	}
-
-	return m.saveLocked()
 }

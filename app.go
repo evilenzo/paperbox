@@ -3,73 +3,60 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
-	"paperbox/internal/app"
+	"paperbox/internal/config"
 	"paperbox/models"
-
-	"github.com/wailsapp/wails/v2/pkg/logger"
 )
 
 // App is a thin wrapper for Wails bindings
 type App struct {
-	app *app.App
+	ctx       context.Context
+	configMgr *config.Manager
 }
 
 // NewApp creates a new App instance
 func NewApp() *App {
 	return &App{
-		app: app.New(),
+		configMgr: config.NewManager(),
 	}
 }
 
-// startup initializes the application (called by Wails)
 func (a *App) startup(ctx context.Context) {
-	if err := a.app.Startup(ctx); err != nil {
-		logger.NewDefaultLogger().Fatal(err.Error())
+	a.ctx = ctx
+
+	// Set context for config manager (needed for events)
+	a.configMgr.SetContext(ctx, nil)
+
+	// Load all configurations
+	if err := a.configMgr.LoadAll(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to startup application: %v\n", err)
+		os.Exit(1)
 	}
 }
 
 // GetRequests returns the requests for Wails bindings
 func (a *App) GetRequests() models.Requests {
-	requestsMap := a.app.GetRequests()
-	if requestsMap == nil {
+	reqConfig := a.configMgr.GetRequests()
+	if reqConfig == nil {
 		return models.NewRequests()
 	}
 	return models.Requests{
-		Values: requestsMap,
+		Values: reqConfig.Values,
 	}
 }
 
 // SetRequestsPatch applies a partial update to the requests configuration
-func (a *App) SetRequestsPatch(patch map[string]interface{}) error {
-	log := logger.NewDefaultLogger()
-	log.Info("SetRequestsPatch called from Wails binding")
-	if patch == nil {
-		log.Error("SetRequestsPatch: patch is nil")
-		return fmt.Errorf("patch is nil")
-	}
-	log.Info(fmt.Sprintf("SetRequestsPatch: patch has %d keys", len(patch)))
-	if values, ok := patch["values"].(map[string]interface{}); ok {
-		log.Info(fmt.Sprintf("SetRequestsPatch: values contains %d items", len(values)))
-	} else {
-		log.Error("SetRequestsPatch: values is not a map[string]interface{}")
-	}
-	
-	err := a.app.SetRequestsPatch(patch)
-	if err != nil {
-		log.Error(fmt.Sprintf("SetRequestsPatch error: %v", err))
-	} else {
-		log.Info("SetRequestsPatch completed successfully")
-	}
-	return err
+func (a *App) SetRequestsPatch(patch models.RequestsPatch) error {
+	return a.configMgr.Requests().PatchValues(patch.Values)
 }
 
 // AddRequest adds a new request to a parent folder
 func (a *App) AddRequest(parentId string, name string, method string, path string) (string, error) {
-	return a.app.AddRequest(parentId, name, method, path)
+	return a.configMgr.Requests().AddRequest(parentId, name, method, path)
 }
 
 // AddFolder adds a new folder to a parent folder
 func (a *App) AddFolder(parentId string, name string) (string, error) {
-	return a.app.AddFolder(parentId, name)
+	return a.configMgr.Requests().AddFolder(parentId, name)
 }

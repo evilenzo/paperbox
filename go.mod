@@ -6,7 +6,6 @@ require (
 	github.com/adrg/xdg v0.5.3
 	github.com/bep/debounce v1.2.1
 	github.com/go-playground/validator/v10 v10.28.0
-	github.com/google/renameio/v2 v2.0.0
 	github.com/google/uuid v1.6.0
 	github.com/wailsapp/wails/v2 v2.10.2
 )

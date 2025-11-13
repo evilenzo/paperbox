@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sync"
 
-	"paperbox/internal/config/base"
+	"paperbox/internal/configutil"
 
 	"github.com/adrg/xdg"
 	"github.com/wailsapp/wails/v2/pkg/logger"
@@ -45,34 +46,48 @@ func DefaultConfig() *Config {
 
 // Manager manages the user configuration
 type Manager struct {
-	*base.BaseManager
-	config *Config
+	mu         sync.RWMutex
+	storage    configutil.Storage
+	events     *configutil.Events
+	debounce   *configutil.Debounce
+	config     *Config
+	configFile string
 }
 
 // NewManager creates a new config manager
 func NewManager() *Manager {
 	return &Manager{
-		BaseManager: base.NewBaseManager(configFile),
-		config:      DefaultConfig(),
+		storage:    configutil.NewFileStorage(),
+		events:     configutil.NewEvents(context.TODO()),
+		debounce:   configutil.NewDebounce(configutil.DefaultDebounceDuration),
+		config:     DefaultConfig(),
+		configFile: configFile,
 	}
 }
 
-// Ensure Manager implements base.ConfigManager interface
-var _ base.ConfigManager = (*Manager)(nil)
+// NewManagerWithStorage creates a new config manager with custom storage (for testing)
+func NewManagerWithStorage(storage configutil.Storage) *Manager {
+	return &Manager{
+		storage:    storage,
+		events:     configutil.NewEvents(context.TODO()),
+		debounce:   configutil.NewDebounce(configutil.DefaultDebounceDuration),
+		config:     DefaultConfig(),
+		configFile: configFile,
+	}
+}
 
 // SetContext sets the Wails runtime context for emitting events
 func (m *Manager) SetContext(ctx context.Context, log logger.Logger) {
-	m.BaseManager.SetContext(ctx, log)
+	m.events.SetContext(ctx)
 }
 
 // Load loads the configuration from file
 func (m *Manager) Load() error {
-	mu := m.GetMutex()
-	mu.Lock()
-	defer mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	// Ensure directory exists
-	if err := base.EnsureDir(configFile); err != nil {
+	if err := configutil.EnsureDir(configFile); err != nil {
 		return err
 	}
 
@@ -92,25 +107,24 @@ func (m *Manager) Load() error {
 	}
 
 	// Parse config
-	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("failed to parse config file: %w", err)
 	}
 
 	// Ensure version is set
-	if config.Version == 0 {
-		config.Version = CurrentVersion
+	if cfg.Version == 0 {
+		cfg.Version = CurrentVersion
 	}
 
-	m.config = &config
+	m.config = &cfg
 	return nil
 }
 
 // Get returns a copy of the current configuration
 func (m *Manager) Get() interface{} {
-	mu := m.GetMutex()
-	mu.RLock()
-	defer mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	// Return a copy to prevent external modifications
 	configCopy := *m.config
@@ -120,31 +134,30 @@ func (m *Manager) Get() interface{} {
 // GetConfig returns the user config (type-safe version)
 func (m *Manager) GetConfig() *Config {
 	result := m.Get()
-	if config, ok := result.(*Config); ok {
-		return config
+	if cfg, ok := result.(*Config); ok {
+		return cfg
 	}
 	return DefaultConfig()
 }
 
 // Patch applies a partial update to the configuration
 func (m *Manager) Patch(patch map[string]interface{}) error {
-	mu := m.GetMutex()
-	mu.Lock()
-	defer mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if m.config == nil {
 		return fmt.Errorf("config is not loaded")
 	}
 
-	// Use base helper for patching
-	configMap, err := base.PatchConfig(m.config, patch)
+	// Use storage helper for patching
+	configMap, err := m.storage.PatchConfig(m.config, patch)
 	if err != nil {
 		return err
 	}
 
 	// Convert back to Config struct
 	var mergedConfig Config
-	if err := base.UnmarshalPatchedConfig(configMap.(map[string]interface{}), &mergedConfig); err != nil {
+	if err := configutil.UnmarshalPatchedConfig(configMap.(map[string]interface{}), &mergedConfig); err != nil {
 		return err
 	}
 
@@ -155,21 +168,31 @@ func (m *Manager) Patch(patch map[string]interface{}) error {
 	m.config = &mergedConfig
 
 	// Emit config:updated event for optimistic UI update
-	m.EmitUpdatedWithName("config:updated", m.config)
+	m.events.EmitUpdated("config:updated", m.config)
 
 	// Schedule save with debounce
-	m.ScheduleSave(func() error {
-		return m.save()
-	}, "config")
+	ctx := m.events.GetContext()
+	m.debounce.Schedule(func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if err := m.saveLocked(); err != nil {
+			if ctx != nil {
+				m.events.EmitError("config:error", err.Error())
+			}
+		} else {
+			if ctx != nil {
+				m.events.EmitSaved("config:saved", m.configFile)
+			}
+		}
+	})
 
 	return nil
 }
 
 // Save saves the configuration to file
 func (m *Manager) Save() error {
-	mu := m.GetMutex()
-	mu.Lock()
-	defer mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if m.config == nil {
 		return fmt.Errorf("config is not loaded")
@@ -180,9 +203,10 @@ func (m *Manager) Save() error {
 
 // saveLocked saves the configuration to file (must be called with lock held)
 func (m *Manager) saveLocked() error {
-	return base.SaveJSONConfig(
+	return configutil.SaveJSONConfig(
+		m.storage,
 		m.config,
-		configFile,
+		m.configFile,
 		0o600,
 		func() {
 			if m.config.Version == 0 {
@@ -190,13 +214,4 @@ func (m *Manager) saveLocked() error {
 			}
 		},
 	)
-}
-
-// save saves the configuration to file (internal, assumes lock is held)
-func (m *Manager) save() error {
-	if m.config == nil {
-		return fmt.Errorf("config is not loaded")
-	}
-
-	return m.saveLocked()
 }
