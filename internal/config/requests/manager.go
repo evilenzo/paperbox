@@ -3,9 +3,9 @@ package requests
 import (
 	"context"
 	"fmt"
-	"sync"
 
-	"paperbox/internal/configutil"
+	"paperbox/internal/config/core"
+	"paperbox/internal/config/storage"
 
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/logger"
@@ -14,40 +14,45 @@ import (
 
 // Manager manages the requests configuration with in-memory state and debounced saves
 type Manager struct {
-	mu         sync.RWMutex
-	storage    configutil.Storage
-	events     *configutil.Events
-	debounce   *configutil.Debounce
-	config     *RequestsConfig
-	configFile string
-}
-
-// getMapKeys returns a slice of keys from a map
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
+	*core.BaseManager[RequestsConfig]
 }
 
 // NewManager creates a new requests config manager
-func NewManager() *Manager {
+func NewManager(storage storage.Storage) *Manager {
 	return &Manager{
-		storage:    configutil.NewFileStorage(),
-		events:     configutil.NewEvents(context.TODO()),
-		debounce:   configutil.NewDebounce(configutil.DefaultDebounceDuration),
-		configFile: getRequestsFilePath(),
+		BaseManager: core.NewBaseManager(core.BaseManagerOptions[RequestsConfig]{
+			Storage:    storage,
+			ConfigFile: getRequestsFilePath(),
+			EventName:  "requests",
+			Loader:     Load,
+			Validator:  Validate,
+			EnsureFunc: func(cfg *RequestsConfig) {
+				if cfg.Version == 0 {
+					cfg.Version = CurrentVersion
+				}
+			},
+		}),
 	}
 }
 
-// NewManagerWithStorage creates a new requests config manager with custom storage (for testing)
-func NewManagerWithStorage(storage configutil.Storage) *Manager {
+// NewManagerWithWriter creates a new requests config manager with a custom writer (for testing)
+func NewManagerWithWriter(writer storage.Writer) *Manager {
+	fileStorage := storage.NewFileStorageWithWriter(writer)
+	coordinator := storage.NewStorageCoordinator(fileStorage, nil, nil)
+
 	return &Manager{
-		storage:    storage,
-		events:     configutil.NewEvents(context.TODO()),
-		debounce:   configutil.NewDebounce(configutil.DefaultDebounceDuration),
-		configFile: getRequestsFilePath(),
+		BaseManager: core.NewBaseManager(core.BaseManagerOptions[RequestsConfig]{
+			Storage:    coordinator,
+			ConfigFile: getRequestsFilePath(),
+			EventName:  "requests",
+			Loader:     Load,
+			Validator:  Validate,
+			EnsureFunc: func(cfg *RequestsConfig) {
+				if cfg.Version == 0 {
+					cfg.Version = CurrentVersion
+				}
+			},
+		}),
 	}
 }
 
@@ -58,282 +63,234 @@ func getRequestsFilePath() string {
 
 // SetContext sets the Wails runtime context for emitting events
 func (m *Manager) SetContext(ctx context.Context, log logger.Logger) {
-	m.events.SetContext(ctx)
+	m.BaseManager.SetContext(ctx, log)
 }
 
-// Load loads the configuration from file
-func (m *Manager) Load() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	cfg, err := Load()
-	if err != nil {
-		return err
-	}
-
-	m.config = cfg
-	return nil
-}
-
-// Get returns a copy of the current configuration
+// Get returns a copy of the current configuration (implements ManagerInterface)
 func (m *Manager) Get() interface{} {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if m.config == nil {
-		return NewRequestsConfig()
-	}
-
-	// Return a copy to prevent external modifications
-	configCopy := *m.config
-	valuesCopy := make(map[string]Item, len(m.config.Values))
-	for k, v := range m.config.Values {
-		valuesCopy[k] = v
-	}
-	configCopy.Values = valuesCopy
-
-	return &configCopy
+	return m.GetRequestsConfig()
 }
 
 // GetRequestsConfig returns the requests config (type-safe version)
 func (m *Manager) GetRequestsConfig() *RequestsConfig {
-	result := m.Get()
-	if cfg, ok := result.(*RequestsConfig); ok {
-		return cfg
-	}
-	return NewRequestsConfig()
+	return m.BaseManager.Get()
 }
 
 // PatchValues applies a partial update to the requests configuration using typed values
 func (m *Manager) PatchValues(values map[string]Item) error {
-	// Get context BEFORE locking to avoid deadlock
-	ctx := m.events.GetContext()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	ctx := m.Events().Context()
 
 	if ctx != nil {
 		runtime.LogInfo(ctx, fmt.Sprintf("PatchValues called with %d items", len(values)))
 	}
 
-	if m.config == nil {
+	return m.UpdateConfig(func(cfg *RequestsConfig) error {
+		if cfg.Values == nil {
+			cfg.Values = make(map[string]Item)
+		}
+
+		// Merge values into config
+		for k, v := range values {
+			cfg.Values[k] = v
+		}
+
 		if ctx != nil {
-			runtime.LogError(ctx, "PatchValues: config is not loaded")
+			runtime.LogInfo(ctx, fmt.Sprintf("Config updated in memory, values count: %d", len(cfg.Values)))
 		}
-		return fmt.Errorf("config is not loaded")
-	}
 
-	// Create a copy of current config
-	mergedConfig := *m.config
-	if mergedConfig.Values == nil {
-		mergedConfig.Values = make(map[string]Item)
-	}
-
-	// Merge values into config
-	for k, v := range values {
-		mergedConfig.Values[k] = v
-	}
-
-	// Ensure version is preserved
-	mergedConfig.Version = m.config.Version
-
-	// Validate merged config
-	if err := Validate(&mergedConfig); err != nil {
+		// Emit event with proper format
+		eventData := map[string]interface{}{
+			"version": cfg.Version,
+			"values":  cfg.Values,
+		}
 		if ctx != nil {
-			runtime.LogError(ctx, fmt.Sprintf("Validation failed: %v", err))
+			runtime.LogInfo(ctx, fmt.Sprintf("About to emit requests:updated event with %d items", len(cfg.Values)))
 		}
-		return fmt.Errorf("merged config validation failed: %w", err)
-	}
-
-	// Update in-memory config
-	m.config = &mergedConfig
-
-	if ctx != nil {
-		runtime.LogInfo(ctx, fmt.Sprintf("Config updated in memory, values count: %d", len(m.config.Values)))
-	}
-
-	// Convert config to map for proper serialization
-	eventData := map[string]interface{}{
-		"version": m.config.Version,
-		"values":  m.config.Values,
-	}
-	// Emit requests:updated event for optimistic UI update
-	if ctx != nil {
-		runtime.LogInfo(ctx, fmt.Sprintf("About to emit requests:updated event with %d items", len(m.config.Values)))
-		runtime.EventsEmit(ctx, "requests:updated", eventData)
-		runtime.LogInfo(ctx, "Event requests:updated emitted")
-	}
-
-	// Schedule save with debounce
-	m.debounce.Schedule(func() {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if err := m.saveLocked(); err != nil {
-			if ctx != nil {
-				m.events.EmitError("requests:error", err.Error())
-			}
-		} else {
-			if ctx != nil {
-				m.events.EmitSaved("requests:saved", m.configFile)
-			}
+		m.Events().Updated("requests:updated", eventData)
+		if ctx != nil {
+			runtime.LogInfo(ctx, "Event requests:updated emitted")
 		}
+
+		return nil
 	})
-
-	return nil
 }
 
 // AddRequest adds a new request to a parent folder
 func (m *Manager) AddRequest(parentId string, name string, method string, path string) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	var newId string
 
-	if m.config == nil {
-		return "", fmt.Errorf("config is not loaded")
-	}
+	err := m.UpdateConfig(func(cfg *RequestsConfig) error {
+		// Generate UUID
+		newId = uuid.New().String()
 
-	// Generate UUID
-	newId := uuid.New().String()
-
-	// Create new request item
-	newItem := Item{
-		Type:   ItemTypeRequest,
-		Name:   name,
-		Method: method,
-		Path:   path,
-	}
-
-	// Get parent folder
-	parent, exists := m.config.Values[parentId]
-	if !exists || parent.Type != ItemTypeFolder {
-		return "", fmt.Errorf("parent folder not found")
-	}
-
-	// Add new item to config
-	m.config.Values[newId] = newItem
-
-	// Add to parent's children
-	children := make([]string, len(parent.Children))
-	copy(children, parent.Children)
-	children = append(children, newId)
-	m.config.Values[parentId] = Item{
-		Type:     parent.Type,
-		Name:     parent.Name,
-		Children: children,
-	}
-
-	// Emit updated event
-	eventData := map[string]interface{}{
-		"version": m.config.Version,
-		"values":  m.config.Values,
-	}
-	m.events.EmitUpdated("requests:updated", eventData)
-
-	// Schedule save with debounce
-	ctx := m.events.GetContext()
-	m.debounce.Schedule(func() {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if err := m.saveLocked(); err != nil {
-			if ctx != nil {
-				m.events.EmitError("requests:error", err.Error())
-			}
-		} else {
-			if ctx != nil {
-				m.events.EmitSaved("requests:saved", m.configFile)
-			}
+		// Create new request item
+		newItem := Item{
+			Type:   ItemTypeRequest,
+			Name:   name,
+			Method: method,
+			Path:   path,
 		}
+
+		// Get parent folder
+		parent, exists := cfg.Values[parentId]
+		if !exists || parent.Type != ItemTypeFolder {
+			return fmt.Errorf("parent folder not found")
+		}
+
+		// Add new item to config
+		if cfg.Values == nil {
+			cfg.Values = make(map[string]Item)
+		}
+		cfg.Values[newId] = newItem
+
+		// Initialize parent.Children if nil
+		if parent.Children == nil {
+			parent.Children = []string{}
+		}
+		// Add to parent's children
+		parent.Children = append(parent.Children, newId)
+		cfg.Values[parentId] = parent
+
+		// Emit updated event
+		eventData := map[string]interface{}{
+			"version": cfg.Version,
+			"values":  cfg.Values,
+		}
+		m.Events().Updated("requests:updated", eventData)
+
+		return nil
 	})
 
-	return newId, nil
+	return newId, err
 }
 
 // AddFolder adds a new folder to a parent folder
 func (m *Manager) AddFolder(parentId string, name string) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	var newId string
 
-	if m.config == nil {
-		return "", fmt.Errorf("config is not loaded")
-	}
+	err := m.UpdateConfig(func(cfg *RequestsConfig) error {
+		// Generate UUID
+		newId = uuid.New().String()
 
-	// Generate UUID
-	newId := uuid.New().String()
-
-	// Create new folder item
-	newItem := Item{
-		Type:     ItemTypeFolder,
-		Name:     name,
-		Children: []string{},
-	}
-
-	// Get parent folder
-	parent, exists := m.config.Values[parentId]
-	if !exists || parent.Type != ItemTypeFolder {
-		return "", fmt.Errorf("parent folder not found")
-	}
-
-	// Add new item to config
-	m.config.Values[newId] = newItem
-
-	// Add to parent's children
-	children := make([]string, len(parent.Children))
-	copy(children, parent.Children)
-	children = append(children, newId)
-	m.config.Values[parentId] = Item{
-		Type:     parent.Type,
-		Name:     parent.Name,
-		Children: children,
-	}
-
-	// Emit updated event
-	eventData := map[string]interface{}{
-		"version": m.config.Version,
-		"values":  m.config.Values,
-	}
-	m.events.EmitUpdated("requests:updated", eventData)
-
-	// Schedule save with debounce
-	ctx := m.events.GetContext()
-	m.debounce.Schedule(func() {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if err := m.saveLocked(); err != nil {
-			if ctx != nil {
-				m.events.EmitError("requests:error", err.Error())
-			}
-		} else {
-			if ctx != nil {
-				m.events.EmitSaved("requests:saved", m.configFile)
-			}
+		// Create new folder item
+		newItem := Item{
+			Type:     ItemTypeFolder,
+			Name:     name,
+			Children: []string{},
 		}
+
+		// Get parent folder
+		parent, exists := cfg.Values[parentId]
+		if !exists || parent.Type != ItemTypeFolder {
+			return fmt.Errorf("parent folder not found")
+		}
+
+		// Add new item to config
+		if cfg.Values == nil {
+			cfg.Values = make(map[string]Item)
+		}
+		cfg.Values[newId] = newItem
+
+		// Initialize parent.Children if nil
+		if parent.Children == nil {
+			parent.Children = []string{}
+		}
+		// Add to parent's children
+		parent.Children = append(parent.Children, newId)
+		cfg.Values[parentId] = parent
+
+		// Emit updated event
+		eventData := map[string]interface{}{
+			"version": cfg.Version,
+			"values":  cfg.Values,
+		}
+		m.Events().Updated("requests:updated", eventData)
+
+		return nil
 	})
 
-	return newId, nil
+	return newId, err
 }
 
-// Save saves the configuration to file
-func (m *Manager) Save() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// AddRootFolder adds a new root-level folder (without parent)
+func (m *Manager) AddRootFolder(name string) (string, error) {
+	var newId string
 
-	if m.config == nil {
-		return fmt.Errorf("config is not loaded")
-	}
+	err := m.UpdateConfig(func(cfg *RequestsConfig) error {
+		// Generate UUID
+		newId = uuid.New().String()
 
-	return m.saveLocked()
+		// Create new folder item
+		newItem := Item{
+			Type:     ItemTypeFolder,
+			Name:     name,
+			Children: []string{},
+		}
+
+		// Add new item to config
+		if cfg.Values == nil {
+			cfg.Values = make(map[string]Item)
+		}
+		cfg.Values[newId] = newItem
+
+		// Emit updated event
+		eventData := map[string]interface{}{
+			"version": cfg.Version,
+			"values":  cfg.Values,
+		}
+		m.Events().Updated("requests:updated", eventData)
+
+		return nil
+	})
+
+	return newId, err
 }
 
-// saveLocked saves the configuration to file (must be called with lock held)
-func (m *Manager) saveLocked() error {
-	return configutil.SaveJSONConfig(
-		m.storage,
-		m.config,
-		m.configFile,
-		0o644,
-		func() {
-			if m.config.Version == 0 {
-				m.config.Version = CurrentVersion
+// DeleteItem deletes an item from the requests configuration
+func (m *Manager) DeleteItem(itemId string) error {
+	return m.UpdateConfig(func(cfg *RequestsConfig) error {
+		// Get item to delete
+		item, exists := cfg.Values[itemId]
+		if !exists {
+			return fmt.Errorf("item not found")
+		}
+
+		// Remove from parent's children
+		for parentId, parent := range cfg.Values {
+			if parent.Type == ItemTypeFolder && parent.Children != nil {
+				// Filter out the deleted item from children
+				newChildren := []string{}
+				for _, childId := range parent.Children {
+					if childId != itemId {
+						newChildren = append(newChildren, childId)
+					}
+				}
+				// Only update if children changed
+				if len(newChildren) != len(parent.Children) {
+					parent.Children = newChildren
+					cfg.Values[parentId] = parent
+				}
 			}
-		},
-	)
+		}
+
+		// If it's a folder, also delete all children recursively
+		if item.Type == ItemTypeFolder && item.Children != nil {
+			for _, childId := range item.Children {
+				// Recursively delete children (but don't call DeleteItem to avoid nested UpdateConfig)
+				delete(cfg.Values, childId)
+			}
+		}
+
+		// Delete the item itself
+		delete(cfg.Values, itemId)
+
+		// Emit updated event
+		eventData := map[string]interface{}{
+			"version": cfg.Version,
+			"values":  cfg.Values,
+		}
+		m.Events().Updated("requests:updated", eventData)
+
+		return nil
+	})
 }

@@ -60,3 +60,13 @@ func (a *App) AddRequest(parentId string, name string, method string, path strin
 func (a *App) AddFolder(parentId string, name string) (string, error) {
 	return a.configMgr.Requests().AddFolder(parentId, name)
 }
+
+// AddRootFolder adds a new root-level folder (without parent)
+func (a *App) AddRootFolder(name string) (string, error) {
+	return a.configMgr.Requests().AddRootFolder(name)
+}
+
+// DeleteItem deletes an item from the requests configuration
+func (a *App) DeleteItem(itemId string) error {
+	return a.configMgr.Requests().DeleteItem(itemId)
+}

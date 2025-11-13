@@ -70,11 +70,6 @@ func validateItemTypeSpecificRules(item Item) error {
 			return fmt.Errorf("request must have a method")
 		}
 
-		// Request must have path
-		if item.Path == "" {
-			return fmt.Errorf("request must have a path")
-		}
-
 		// Request must not have children
 		if len(item.Children) > 0 {
 			return fmt.Errorf("request cannot have children")

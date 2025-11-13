@@ -1,148 +1,86 @@
 # Config Package
 
-This package manages all application configurations using a simplified architecture based on composition.
+This package manages every persistent configuration in Paperbox. Each config type owns its own manager, file and synchronization primitives so that saving a large blob never blocks other configs.
 
-## Architecture
+## Layout
 
-The package uses composition instead of inheritance, with utilities in a separate `configutil` package:
+- **`infra/`** – runtime helpers shared by managers (event bus + debouncer).
+- **`storage/`** – persistence primitives (atomic writer, JSON helpers, patching, path utilities).
+- **`requests/`** – hierarchical HTTP request tree config.
+- **`user/`** – user preferences (theme, font size, base URL).
+- **`interface.go`** – interface implemented by every config manager.
+- **`manager.go`** – aggregate that wires multiple configs into the app.
 
-- **`configutil/`** - Utility functions for all config managers:
-  - `storage.go` - Storage interface (WriteFileAtomic, PatchConfig) for dependency injection in tests
-  - `events.go` - Wails event emission functionality
-  - `debounce.go` - Debounced save functionality
-  - `file.go` - File operations (EnsureDir, WriteFileAtomic - cross-platform)
-  - `patch.go` - Helper functions for patching configs (marshal/unmarshal merge)
-  - `save.go` - Helper function for saving JSON configs atomically
+## Design Goals
 
-- **`requests/`** - Requests configuration (HTTP requests and folders)
-- **`user/`** - User configuration (theme, fontSize, baseURL)
-- **`interface.go`** - Common interface for all config managers
-- **`manager.go`** - Main manager that aggregates all config managers
+1. **Multiple independent configs**: each manager works on its own file and mutex, so saving one does not stall the others.
+2. **Compositional helpers**: managers compose the infra + storage helpers they need instead of relying on a big util package.
+3. **Test-friendly persistence**: `storage.Writer` can be swapped for mocks while `storage.MergePatch` keeps patch logic close to persistence.
+4. **Runtime integration**: `infra.EventBus` centralises Wails event emission and logging, while `infra.Debouncer` prevents excessive disk IO.
 
-## Key Changes from Previous Architecture
+## Adding a New Config
 
-1. **No inheritance**: Managers use composition with `configutil` utilities instead of embedding `BaseManager`
-2. **Cross-platform file operations**: Single `WriteFileAtomic` implementation works on all platforms (no platform-specific files)
-3. **Simpler structure**: Each manager composes only what it needs (storage, events, debounce)
-4. **Dependency injection**: Storage interface allows injecting mock implementations for testing
-5. **Direct mutex usage**: Uses `sync.RWMutex` directly instead of unnecessary wrapper
-
-## Adding New Configs
-
-To add a new config:
-
-1. Create a new subdirectory (e.g., `newconfig/`)
-2. Define your config struct
-3. Create a Manager that implements `config.ManagerInterface` and uses `configutil` utilities:
-   ```go
-   type Manager struct {
-       mu         sync.RWMutex
-       storage    configutil.Storage
-       events     *configutil.Events
-       debounce   *configutil.Debounce
-       config     *MyConfig
-       configFile string
-   }
-   ```
-4. Use storage interface and configutil helpers:
-   - `storage.PatchConfig()` for patching
-   - `storage.WriteFileAtomic()` for atomic file writes
-   - `configutil.SaveJSONConfig(storage, ...)` for saving JSON configs
-   - `configutil.EnsureDir()` for directory creation
-   - `configutil.UnmarshalPatchedConfig()` for unmarshaling patched configs
-5. Add the config to `Manager` in `manager.go`
-
-## Common Patterns
-
-All config managers should:
-
-- Use `sync.RWMutex` directly for synchronization (no wrapper needed)
-- Use composition with `configutil.Storage`, `configutil.Events`, and `configutil.Debounce`
-- Implement `config.ManagerInterface` interface
-- Use `storage.PatchConfig()` for patching
-- Use `storage.WriteFileAtomic()` for atomic file writes
-- Use `configutil.SaveJSONConfig(storage, ...)` for saving JSON configs
-- Use `configutil.EnsureDir()` for directory creation
-- Use `configutil.UnmarshalPatchedConfig()` for unmarshaling patched configs
-- Emit events via `events.EmitUpdated()`, `events.EmitSaved()`, `events.EmitError()`
-- Schedule saves via `debounce.Schedule()`
-- Provide `NewManagerWithStorage()` constructor for testing with mock storage
-
-## Example
+1. Create a subpackage (e.g. `internal/config/foo`).
+2. Define your config struct and defaults.
+3. Create a manager that implements `config.ManagerInterface`:
 
 ```go
 type Manager struct {
     mu         sync.RWMutex
-    storage    configutil.Storage
-    events     *configutil.Events
-    debounce   *configutil.Debounce
-    config     *MyConfig
+    writer     storage.Writer
+    events     *infra.EventBus
+    debounce   *infra.Debouncer
+    config     *FooConfig
     configFile string
 }
 
 func NewManager() *Manager {
     return &Manager{
-        storage:    configutil.NewFileStorage(),
-        events:     configutil.NewEvents(context.TODO()),
-        debounce:   configutil.NewDebounce(configutil.DefaultDebounceDuration),
-        configFile: getConfigFilePath(),
+        writer:     storage.NewFileWriter(),
+        events:     infra.NewEventBus(context.TODO(), nil),
+        debounce:   infra.NewDebouncer(infra.DefaultDebounceDuration),
+        config:     DefaultFooConfig(),
+        configFile: fooFilePath(),
     }
 }
+```
 
-func NewManagerWithStorage(storage configutil.Storage) *Manager {
-    return &Manager{
-        storage:    storage,
-        events:     configutil.NewEvents(context.TODO()),
-        debounce:   configutil.NewDebounce(configutil.DefaultDebounceDuration),
-        configFile: getConfigFilePath(),
-    }
-}
+4. Use the helpers close to where they belong:
+   - `storage.MergePatch(current, patch, &updated)` to apply map-based patches.
+   - `storage.SaveJSON(writer, cfg, file, perm, ensureVersion)` for atomic writes.
+   - `storage.EnsureParentDir(file)` when you need the directory to exist for first-run loads.
+   - `events.Updated/Saved/Error` for UI notifications.
+   - `debounce.Schedule` to delay disk writes when patching often.
+5. Register the manager inside `config.NewManager()` (or expose it via your own accessor).
 
+## Common Pattern
+
+```go
 func (m *Manager) Patch(patch map[string]interface{}) error {
     m.mu.Lock()
     defer m.mu.Unlock()
 
-    configMap, err := m.storage.PatchConfig(m.config, patch)
-    if err != nil {
+    var merged FooConfig
+    if err := storage.MergePatch(m.config, patch, &merged); err != nil {
         return err
     }
+    m.config = &merged
+    m.events.Updated("foo:updated", m.config)
 
-    // Unmarshal patched config
-    var mergedConfig MyConfig
-    if err := configutil.UnmarshalPatchedConfig(configMap.(map[string]interface{}), &mergedConfig); err != nil {
-        return err
-    }
-
-    m.config = &mergedConfig
-
-    ctx := m.events.GetContext()
+    ctx := m.events.Context()
     m.debounce.Schedule(func() {
         m.mu.Lock()
         defer m.mu.Unlock()
-        if err := m.saveLocked(); err != nil {
+        if err := storage.SaveJSON(m.writer, m.config, m.configFile, 0o644, ensureVersion); err != nil {
             if ctx != nil {
-                m.events.EmitError("myconfig:error", err.Error())
+                m.events.Error("foo:error", err.Error())
             }
-        } else {
-            if ctx != nil {
-                m.events.EmitSaved("myconfig:saved", m.configFile)
-            }
+            return
+        }
+        if ctx != nil {
+            m.events.Saved("foo:saved", m.configFile)
         }
     })
     return nil
-}
-
-func (m *Manager) saveLocked() error {
-    return configutil.SaveJSONConfig(
-        m.storage,
-        m.config,
-        m.configFile,
-        0o644,
-        func() {
-            if m.config.Version == 0 {
-                m.config.Version = CurrentVersion
-            }
-        },
-    )
 }
 ```

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { requests } from '@/lib/wailsjs/go/models'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Button } from '@/components/ui/button'
@@ -20,11 +20,17 @@ const props = defineProps<{
   itemId: string
   itemsMap: Record<string, requests.Item>
   level?: number
+  addingRequestTo?: string | null
+  addingFolderTo?: string | null
 }>()
 
 const emit = defineEmits<{
   'add-request': [parentId: string]
   'add-folder': [parentId: string]
+  'create-request': [parentId: string, name: string]
+  'create-folder': [parentId: string, name: string]
+  'cancel-add-request': []
+  'cancel-add-folder': []
   rename: [itemId: string, newName: string]
   delete: [itemId: string]
 }>()
@@ -33,6 +39,10 @@ const isOpen = ref(false)
 const isRenaming = ref(false)
 const renameInput = ref('')
 const renameStartTime = ref(0)
+const newRequestInput = ref('')
+const newRequestStartTime = ref(0)
+const newFolderInput = ref('')
+const newFolderStartTime = ref(0)
 
 // Use computed to get the current item from itemsMap to ensure reactivity
 const currentItem = computed(() => {
@@ -78,16 +88,163 @@ const canAddFolder = computed(() => {
   return currentLevel < 2
 })
 
+// Check if we're currently adding a request to this folder
+const isAddingRequest = computed(() => {
+  return props.addingRequestTo === props.itemId && currentItem.value.type === 'folder'
+})
+
+// Check if we're currently adding a folder to this folder
+const isAddingFolder = computed(() => {
+  return props.addingFolderTo === props.itemId && currentItem.value.type === 'folder'
+})
+
+// Auto-open folder when adding request or folder
+watch(isAddingRequest, (newValue) => {
+  if (newValue && currentItem.value.type === 'folder') {
+    isOpen.value = true
+  }
+})
+
+watch(isAddingFolder, (newValue) => {
+  if (newValue && currentItem.value.type === 'folder') {
+    isOpen.value = true
+  }
+})
+
 function handleAddRequest() {
   if (currentItem.value.type === 'folder') {
     emit('add-request', props.itemId)
+    // Reset input and focus it
+    newRequestInput.value = ''
+    newRequestStartTime.value = Date.now()
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const input = document.querySelector(
+          `#new-request-input-${props.itemId}`,
+        ) as HTMLInputElement
+        if (input) {
+          input.focus()
+          input.select()
+        }
+      })
+    })
   }
+}
+
+function handleCreateRequest() {
+  const name = newRequestInput.value.trim()
+  if (name) {
+    emit('create-request', props.itemId, name)
+    newRequestInput.value = ''
+  } else {
+    emit('cancel-add-request')
+  }
+}
+
+function handleCancelAddRequest() {
+  emit('cancel-add-request')
+  newRequestInput.value = ''
+  // Close folder if it's empty
+  if (currentItem.value.type === 'folder' && childItems.value.length === 0) {
+    isOpen.value = false
+  }
+}
+
+function handleNewRequestBlur(event: FocusEvent) {
+  // Don't submit if focus is moving to another element in the same component
+  const relatedTarget = event.relatedTarget as HTMLElement | null
+  if (relatedTarget && relatedTarget.closest(`[data-new-request-id="${props.itemId}"]`)) {
+    return
+  }
+
+  // Don't submit if input just started (user might be moving mouse after clicking)
+  const timeSinceStart = Date.now() - newRequestStartTime.value
+  if (timeSinceStart < 300) {
+    // If blur happened too quickly, refocus the input
+    requestAnimationFrame(() => {
+      const input = document.querySelector(`#new-request-input-${props.itemId}`) as HTMLInputElement
+      if (input && isAddingRequest.value) {
+        input.focus()
+        input.select()
+      }
+    })
+    return
+  }
+
+  // Submit on blur with small delay
+  setTimeout(() => {
+    if (isAddingRequest.value) {
+      handleCreateRequest()
+    }
+  }, 150)
 }
 
 function handleAddFolder() {
   if (currentItem.value.type === 'folder' && canAddFolder.value) {
     emit('add-folder', props.itemId)
+    // Reset input and focus it
+    newFolderInput.value = ''
+    newFolderStartTime.value = Date.now()
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const input = document.querySelector(
+          `#new-folder-input-${props.itemId}`,
+        ) as HTMLInputElement
+        if (input) {
+          input.focus()
+          input.select()
+        }
+      })
+    })
   }
+}
+
+function handleCreateFolder() {
+  const name = newFolderInput.value.trim()
+  if (name) {
+    emit('create-folder', props.itemId, name)
+    newFolderInput.value = ''
+  } else {
+    emit('cancel-add-folder')
+  }
+}
+
+function handleCancelAddFolder() {
+  emit('cancel-add-folder')
+  newFolderInput.value = ''
+  // Close folder if it's empty
+  if (currentItem.value.type === 'folder' && childItems.value.length === 0) {
+    isOpen.value = false
+  }
+}
+
+function handleNewFolderBlur(event: FocusEvent) {
+  // Don't submit if focus is moving to another element in the same component
+  const relatedTarget = event.relatedTarget as HTMLElement | null
+  if (relatedTarget && relatedTarget.closest(`[data-new-folder-id="${props.itemId}"]`)) {
+    return
+  }
+
+  // Don't submit if input just started (user might be moving mouse after clicking)
+  const timeSinceStart = Date.now() - newFolderStartTime.value
+  if (timeSinceStart < 300) {
+    // If blur happened too quickly, refocus the input
+    requestAnimationFrame(() => {
+      const input = document.querySelector(`#new-folder-input-${props.itemId}`) as HTMLInputElement
+      if (input && isAddingFolder.value) {
+        input.focus()
+        input.select()
+      }
+    })
+    return
+  }
+
+  // Submit on blur with small delay
+  setTimeout(() => {
+    if (isAddingFolder.value) {
+      handleCreateFolder()
+    }
+  }, 150)
 }
 
 function handleRename() {
@@ -154,14 +311,12 @@ function handleRenameBlur(event: FocusEvent) {
 }
 
 function handleDelete() {
-  if (confirm(`Are you sure you want to delete "${currentItem.value.name}"?`)) {
-    emit('delete', props.itemId)
-  }
+  emit('delete', props.itemId)
 }
 </script>
 
 <template>
-  <Collapsible v-if="currentItem.type === 'folder' && childItems.length > 0" v-model:open="isOpen">
+  <Collapsible v-if="currentItem.type === 'folder'" v-model:open="isOpen">
     <ContextMenu>
       <ContextMenuTrigger as-child>
         <CollapsibleTrigger as-child>
@@ -179,6 +334,7 @@ function handleDelete() {
               <Folder class="size-4" />
               <span class="font-normal">{{ currentItem.name }}</span>
               <ChevronRight
+                v-if="childItems.length > 0 || isAddingRequest || isAddingFolder"
                 :class="`ml-auto transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`"
               />
             </Button>
@@ -202,7 +358,7 @@ function handleDelete() {
       </ContextMenuContent>
     </ContextMenu>
     <CollapsibleContent>
-      <div :style="{ marginLeft: `${(level || 1) * 24}px` }" class="space-y-1">
+      <div class="ml-6 space-y-1">
         <RequestNodeItem
           v-for="child in childItems"
           :key="child.id"
@@ -210,52 +366,88 @@ function handleDelete() {
           :item-id="child.id"
           :items-map="itemsMap"
           :level="(level || 0) + 1"
+          :adding-request-to="addingRequestTo"
+          :adding-folder-to="addingFolderTo"
           @add-request="(parentId: string) => $emit('add-request', parentId)"
           @add-folder="(parentId: string) => $emit('add-folder', parentId)"
+          @create-request="
+            (parentId: string, name: string) => $emit('create-request', parentId, name)
+          "
+          @create-folder="
+            (parentId: string, name: string) => $emit('create-folder', parentId, name)
+          "
+          @cancel-add-request="$emit('cancel-add-request')"
+          @cancel-add-folder="$emit('cancel-add-folder')"
           @rename="(itemId: string, newName: string) => $emit('rename', itemId, newName)"
           @delete="(itemId: string) => $emit('delete', itemId)"
         />
+        <!-- New request input field -->
+        <div v-if="isAddingRequest" :data-new-request-id="itemId" class="w-full">
+          <Input
+            :id="`new-request-input-${itemId}`"
+            v-model="newRequestInput"
+            class="h-9 text-sm"
+            placeholder="Enter request name..."
+            @keyup.enter="handleCreateRequest"
+            @keyup.esc="handleCancelAddRequest"
+            @blur="handleNewRequestBlur"
+          />
+        </div>
+        <!-- New folder input field -->
+        <div v-if="isAddingFolder" :data-new-folder-id="itemId" class="w-full">
+          <Input
+            :id="`new-folder-input-${itemId}`"
+            v-model="newFolderInput"
+            class="h-9 text-sm"
+            placeholder="Enter folder name..."
+            @keyup.enter="handleCreateFolder"
+            @keyup.esc="handleCancelAddFolder"
+            @blur="handleNewFolderBlur"
+          />
+        </div>
       </div>
     </CollapsibleContent>
   </Collapsible>
 
-  <ContextMenu v-else>
-    <ContextMenuTrigger as-child>
-      <div :data-item-id="itemId" class="w-full">
-        <Input
-          v-if="isRenaming"
-          :id="`rename-input-${itemId}`"
-          v-model="renameInput"
-          class="h-9 text-sm"
-          @keyup.enter="handleRenameSubmit"
-          @keyup.esc="handleRenameCancel"
-          @blur="handleRenameBlur"
-        />
-        <Button v-else class="w-full justify-start gap-2 !px-2" variant="ghost">
-          <Folder v-if="currentItem.type === 'folder'" class="size-4" />
-          <span
-            v-if="currentItem.method"
-            :class="`text-xs font-semibold ${getMethodColor(currentItem.method)}`"
-            >{{ currentItem.method }}</span
-          >
-          <span class="font-normal">{{ currentItem.name }}</span>
-        </Button>
-      </div>
-    </ContextMenuTrigger>
-    <ContextMenuContent>
-      <ContextMenuSub v-if="currentItem.type === 'folder'">
-        <ContextMenuSubTrigger>Add</ContextMenuSubTrigger>
-        <ContextMenuSubContent class="w-48">
-          <ContextMenuItem @click="handleAddRequest">Request</ContextMenuItem>
-          <ContextMenuItem v-if="canAddFolder" @click="handleAddFolder">Folder</ContextMenuItem>
-        </ContextMenuSubContent>
-      </ContextMenuSub>
-      <ContextMenuItem @click="handleRename">
-        <span>Rename</span>
-      </ContextMenuItem>
-      <ContextMenuItem @click="handleDelete">
-        <span class="text-destructive">Delete</span>
-      </ContextMenuItem>
-    </ContextMenuContent>
-  </ContextMenu>
+  <div v-else-if="currentItem.type !== 'folder'">
+    <ContextMenu>
+      <ContextMenuTrigger as-child>
+        <div :data-item-id="itemId" class="w-full">
+          <Input
+            v-if="isRenaming"
+            :id="`rename-input-${itemId}`"
+            v-model="renameInput"
+            class="h-9 text-sm"
+            @keyup.enter="handleRenameSubmit"
+            @keyup.esc="handleRenameCancel"
+            @blur="handleRenameBlur"
+          />
+          <Button v-else class="w-full justify-start gap-2 !px-2" variant="ghost">
+            <Folder v-if="currentItem.type === 'folder'" class="size-4" />
+            <span
+              v-if="currentItem.method"
+              :class="`text-xs font-semibold ${getMethodColor(currentItem.method)}`"
+              >{{ currentItem.method }}</span
+            >
+            <span class="font-normal">{{ currentItem.name }}</span>
+          </Button>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuSub v-if="currentItem.type === 'folder'">
+          <ContextMenuSubTrigger>Add</ContextMenuSubTrigger>
+          <ContextMenuSubContent class="w-48">
+            <ContextMenuItem @click="handleAddRequest">Request</ContextMenuItem>
+            <ContextMenuItem v-if="canAddFolder" @click="handleAddFolder">Folder</ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+        <ContextMenuItem @click="handleRename">
+          <span>Rename</span>
+        </ContextMenuItem>
+        <ContextMenuItem @click="handleDelete">
+          <span class="text-destructive">Delete</span>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  </div>
 </template>

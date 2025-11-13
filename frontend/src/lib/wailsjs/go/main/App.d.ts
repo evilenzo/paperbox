@@ -6,6 +6,10 @@ export function AddFolder(arg1:string,arg2:string):Promise<string>;
 
 export function AddRequest(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
+export function AddRootFolder(arg1:string):Promise<string>;
+
+export function DeleteItem(arg1:string):Promise<void>;
+
 export function GetRequests():Promise<models.Requests>;
 
 export function SetRequestsPatch(arg1:models.RequestsPatch):Promise<void>;

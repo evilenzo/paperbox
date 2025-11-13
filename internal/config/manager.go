@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"paperbox/internal/config/requests"
+	"paperbox/internal/config/storage"
 	"paperbox/internal/config/user"
 
 	"github.com/wailsapp/wails/v2/pkg/logger"
@@ -20,8 +21,12 @@ type Manager struct {
 
 // NewManager creates a new config manager
 func NewManager() *Manager {
-	reqMgr := requests.NewManager()
-	userMgr := user.NewManager()
+	// Create shared storage coordinator for all configs
+	fileStorage := storage.NewFileStorage()
+	coordinator := storage.NewStorageCoordinator(fileStorage, nil, nil)
+
+	reqMgr := requests.NewManager(coordinator)
+	userMgr := user.NewManager(coordinator)
 
 	return &Manager{
 		managers: []ManagerInterface{reqMgr, userMgr},

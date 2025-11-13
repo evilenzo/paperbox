@@ -10,6 +10,14 @@ export function AddRequest(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['AddRequest'](arg1, arg2, arg3, arg4);
 }
 
+export function AddRootFolder(arg1) {
+  return window['go']['main']['App']['AddRootFolder'](arg1);
+}
+
+export function DeleteItem(arg1) {
+  return window['go']['main']['App']['DeleteItem'](arg1);
+}
+
 export function GetRequests() {
   return window['go']['main']['App']['GetRequests']();
 }

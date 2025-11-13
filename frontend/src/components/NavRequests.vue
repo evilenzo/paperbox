@@ -5,9 +5,17 @@ import RequestNodeItem from '@/components/RequestNodeItem.vue'
 import { FolderPlus, Search, RefreshCw } from 'lucide-vue-next'
 
 import { models, requests } from '@/lib/wailsjs/go/models'
-import { GetRequests, SetRequestsPatch, AddRequest, AddFolder } from '@/lib/wailsjs/go/main/App'
+import {
+  GetRequests,
+  SetRequestsPatch,
+  AddRequest,
+  AddFolder,
+  AddRootFolder,
+  DeleteItem,
+} from '@/lib/wailsjs/go/main/App'
 import { EventsOn, EventsOff, LogInfo, LogError } from '@/lib/wailsjs/runtime/runtime'
 import Button from './ui/button/Button.vue'
+import { Input } from './ui/input'
 
 // Type for requests:updated event data
 interface RequestsUpdatedEvent {
@@ -18,6 +26,10 @@ interface RequestsUpdatedEvent {
 
 const requestsData = ref<models.Requests | null>(null)
 const error = ref<string | null>(null)
+const addingRequestTo = ref<string | null>(null)
+const addingFolderTo = ref<string | null>(null)
+const addingRootFolder = ref(false)
+const newRootFolderInput = ref('')
 
 // Load requests from backend
 async function loadRequests() {
@@ -155,6 +167,75 @@ async function updateRequests(newValues: Record<string, requests.Item>) {
   }
 }
 
+// Start adding a new request (show input field)
+function startAddingRequest(parentId: string) {
+  addingRequestTo.value = parentId
+}
+
+// Cancel adding request
+function cancelAddingRequest() {
+  addingRequestTo.value = null
+}
+
+// Start adding a new folder (show input field)
+function startAddingFolder(parentId: string) {
+  addingFolderTo.value = parentId
+}
+
+// Cancel adding folder
+function cancelAddingFolder() {
+  addingFolderTo.value = null
+}
+
+// Start adding a root-level folder
+function startAddingRootFolder() {
+  addingRootFolder.value = true
+  newRootFolderInput.value = ''
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const input = document.querySelector('#new-root-folder-input') as HTMLInputElement
+      if (input) {
+        input.focus()
+        input.select()
+      }
+    })
+  })
+}
+
+// Cancel adding root folder
+function cancelAddingRootFolder() {
+  addingRootFolder.value = false
+  newRootFolderInput.value = ''
+}
+
+// Create root folder
+async function createRootFolder() {
+  const name = newRootFolderInput.value.trim()
+  if (name) {
+    try {
+      await AddRootFolder(name)
+      addingRootFolder.value = false
+      newRootFolderInput.value = ''
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : 'Failed to create folder'
+      LogError(
+        'Failed to create root folder: ' + (err instanceof Error ? err.message : String(err)),
+      )
+    }
+  } else {
+    cancelAddingRootFolder()
+  }
+}
+
+// Handle root folder input blur
+function handleRootFolderBlur() {
+  setTimeout(() => {
+    if (addingRootFolder.value) {
+      createRootFolder()
+    }
+  }, 150)
+}
+
 // Add new item (request or folder) to a parent folder
 async function addItem(parentId: string, type: 'request' | 'folder', name: string) {
   try {
@@ -162,6 +243,12 @@ async function addItem(parentId: string, type: 'request' | 'folder', name: strin
       await AddFolder(parentId, name)
     } else {
       await AddRequest(parentId, name, 'GET', '')
+    }
+    // Clear adding state after successful creation
+    if (type === 'request') {
+      addingRequestTo.value = null
+    } else if (type === 'folder') {
+      addingFolderTo.value = null
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to add item'
@@ -205,41 +292,13 @@ async function renameItem(itemId: string, newName: string) {
 
 // Delete an item
 async function deleteItem(itemId: string) {
-  if (!requestsData.value || !requestsData.value.values) return
-
-  const newValues = { ...requestsData.value.values }
-  const item = newValues[itemId]
-
-  // Remove from parent's children
-  if (item) {
-    Object.keys(newValues).forEach((parentId) => {
-      const parent = newValues[parentId]
-      if (parent && parent.type === 'folder' && parent.children) {
-        const children = Array.isArray(parent.children)
-          ? parent.children.filter((id: string) => id !== itemId)
-          : []
-        newValues[parentId] = {
-          ...parent,
-          children,
-        }
-      }
-    })
-
-    // If it's a folder, also delete all children recursively
-    if (item.type === 'folder' && item.children) {
-      const childrenIds = Array.isArray(item.children)
-        ? item.children.map((id: unknown) => String(id))
-        : []
-      childrenIds.forEach((childId) => {
-        delete newValues[childId]
-      })
-    }
-
-    // Delete the item itself
-    delete newValues[itemId]
+  try {
+    await DeleteItem(itemId)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Failed to delete item'
+    LogError('Failed to delete item: ' + (err instanceof Error ? err.message : String(err)))
+    throw err
   }
-
-  await updateRequests(newValues)
 }
 
 defineProps<{
@@ -259,7 +318,7 @@ defineProps<{
 <template>
   <div class="space-y-1 flex-1 flex-col">
     <div class="flex gap-1">
-      <Button variant="ghost" class="flex-1 justify-center !px-2">
+      <Button variant="ghost" class="flex-1 justify-center !px-2" @click="startAddingRootFolder">
         <FolderPlus class="size-4" />
       </Button>
       <Button variant="ghost" class="flex-1 justify-center !px-2">
@@ -269,14 +328,33 @@ defineProps<{
         <RefreshCw class="size-4" />
       </Button>
     </div>
+    <!-- New root folder input field -->
+    <div v-if="addingRootFolder" class="w-full">
+      <Input
+        id="new-root-folder-input"
+        v-model="newRootFolderInput"
+        class="h-9 text-sm"
+        placeholder="Enter folder name..."
+        @keyup.enter="createRootFolder"
+        @keyup.esc="cancelAddingRootFolder"
+        @blur="handleRootFolderBlur"
+      />
+    </div>
     <RequestNodeItem
       v-for="rootItem in rootItems"
       :key="rootItem.id"
       :item="rootItem.item"
       :item-id="rootItem.id"
       :items-map="itemsMap"
-      @add-request="(parentId: string) => addItem(parentId, 'request', 'New Request')"
-      @add-folder="(parentId: string) => addItem(parentId, 'folder', 'New Folder')"
+      :level="0"
+      :adding-request-to="addingRequestTo"
+      :adding-folder-to="addingFolderTo"
+      @add-request="(parentId: string) => startAddingRequest(parentId)"
+      @add-folder="(parentId: string) => startAddingFolder(parentId)"
+      @create-request="(parentId: string, name: string) => addItem(parentId, 'request', name)"
+      @create-folder="(parentId: string, name: string) => addItem(parentId, 'folder', name)"
+      @cancel-add-request="cancelAddingRequest"
+      @cancel-add-folder="cancelAddingFolder"
       @rename="(itemId: string, newName: string) => renameItem(itemId, newName)"
       @delete="(itemId: string) => deleteItem(itemId)"
     />
